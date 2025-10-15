@@ -1892,7 +1892,8 @@ fn offset_cell_name(
     offset: (i64, i64),
     absolute: (bool, bool),
 ) -> Result<Vec<u8>, XlsxError> {
-    let (row, col) = get_row_column(&name)?;
+    let clean: Vec<u8> = name.iter().filter(|&&c| c != b'$').copied().collect();
+    let (row, col) = get_row_column(&clean)?;
 
     let new_row = if absolute.0 {
         row
@@ -1918,14 +1919,30 @@ fn offset_cell_name(
     Ok(result)
 }
 
+fn offset_cell_with_parse(name: &[u8], offset: (i64, i64)) -> Result<Vec<u8>, XlsxError> {
+    let mut col_absolute = false;
+    let mut row_absolute = false;
+    let mut seen_letter = false;
+
+    for &c in name {
+        match c {
+            b'$' if seen_letter => row_absolute = true,
+            b'$' => col_absolute = true,
+            b'A'..=b'Z' | b'a'..=b'z' => seen_letter = true,
+            _ => {}
+        }
+    }
+
+    offset_cell_name(name, offset, (row_absolute, col_absolute))
+}
+
 /// advance all valid cell names in the string by the offset
 fn replace_cell_names(s: &str, offset: (i64, i64)) -> Result<String, XlsxError> {
     let mut res: Vec<u8> = Vec::new();
     let mut cell: Vec<u8> = Vec::new();
     let mut is_cell_row = false;
     let mut in_quote = false;
-    let mut seen_dollar = false;
-    let mut absolute = (false, false);
+
     for c in s.bytes() {
         if c == b'"' {
             in_quote = !in_quote;
@@ -1934,59 +1951,44 @@ fn replace_cell_names(s: &str, offset: (i64, i64)) -> Result<String, XlsxError> 
             res.push(c);
             continue;
         }
-        if c.is_ascii_alphabetic() {
-            if is_cell_row {
+        if c.is_ascii_alphabetic() || c == b'$' {
+            if is_cell_row && c.is_ascii_alphabetic() {
                 // two cell not possible stick together in formula
-                res.extend(cell.iter().copied());
+                if !cell.is_empty() {
+                    if let Ok(cell_name) = offset_cell_with_parse(&cell, offset) {
+                        res.extend(cell_name);
+                    } else {
+                        res.extend(cell.iter().copied());
+                    }
+                }
                 cell.clear();
                 is_cell_row = false;
-                absolute = (false, false);
-            }
-            if seen_dollar {
-                absolute.1 = true;
             }
             cell.push(c);
         } else if c.is_ascii_digit() {
-            if seen_dollar {
-                absolute.0 = true;
-            }
             is_cell_row = true;
             cell.push(c);
-        } else if c == b'$' {
-            seen_dollar = true;
         } else {
-            if let Ok(cell_name) = offset_cell_name(cell.as_ref(), offset, absolute) {
-                res.extend(cell_name);
-            } else {
-                res.extend(cell.iter().copied());
+            if !cell.is_empty() {
+                if let Ok(cell_name) = offset_cell_with_parse(&cell, offset) {
+                    res.extend(cell_name);
+                } else {
+                    res.extend(cell.iter().copied());
+                }
             }
-            if seen_dollar {
-                res.push(b'$');
-            }
-            absolute = (false, false);
             cell.clear();
             is_cell_row = false;
             res.push(c);
         }
-
-        if c != b'$' {
-            seen_dollar = false;
-        }
     }
     if !cell.is_empty() {
-        if let Ok(cell_name) = offset_cell_name(cell.as_ref(), offset, absolute) {
+        if let Ok(cell_name) = offset_cell_with_parse(&cell, offset) {
             res.extend(cell_name);
         } else {
             res.extend(cell.iter().copied());
         }
     }
-    if seen_dollar {
-        res.push(b'$');
-    }
-    match String::from_utf8(res) {
-        Ok(s) => Ok(s),
-        Err(_) => Err(XlsxError::Unexpected("fail to convert cell name")),
-    }
+    String::from_utf8(res).map_err(|_| XlsxError::Unexpected("fail to convert cell name"))
 }
 
 /// Convert the integer to Excelsheet column title.
