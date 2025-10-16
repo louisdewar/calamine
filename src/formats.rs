@@ -54,28 +54,104 @@ impl Color {
     }
 
     /// Returns a tinted version of the color based on Excel tint adjustment.
+    /// According to the OOXML spec, tint is applied to the lightness component in HLS color space.
     pub fn with_tint(self, tint: f64) -> Self {
         if tint == 0.0 {
             return self;
         }
 
-        fn apply(channel: u8, tint: f64) -> u8 {
-            let value = channel as f64 / 255.0;
-            let adjusted = if tint < 0.0 {
-                value * (1.0 + tint)
-            } else {
-                value + (1.0 - value) * tint
-            };
-            (adjusted.clamp(0.0, 1.0) * 255.0).round() as u8
-        }
+        let (h, l, s) = rgb_to_hls(self.r, self.g, self.b);
 
-        Self {
-            r: apply(self.r, tint),
-            g: apply(self.g, tint),
-            b: apply(self.b, tint),
-            a: self.a,
-        }
+        let adjusted_l = if tint < 0.0 {
+            l * (1.0 + tint)
+        } else {
+            l * (1.0 - tint) + 255.0 * tint
+        };
+
+        let adjusted_l = adjusted_l.clamp(0.0, 255.0);
+        let (r, g, b) = hls_to_rgb(h, adjusted_l, s);
+
+        Self { r, g, b, a: self.a }
     }
+}
+
+/// Convert RGB (0-255) to HLS (H: 0-360, L: 0-255, S: 0-255)
+fn rgb_to_hls(r: u8, g: u8, b: u8) -> (f64, f64, f64) {
+    let r_norm = r as f64 / 255.0;
+    let g_norm = g as f64 / 255.0;
+    let b_norm = b as f64 / 255.0;
+
+    let max = r_norm.max(g_norm).max(b_norm);
+    let min = r_norm.min(g_norm).min(b_norm);
+    let delta = max - min;
+
+    let l = (max + min) / 2.0;
+
+    let (h, s) = if delta == 0.0 {
+        (0.0, 0.0)
+    } else {
+        let s = if l < 0.5 {
+            delta / (max + min)
+        } else {
+            delta / (2.0 - max - min)
+        };
+
+        let h = if max == r_norm {
+            ((g_norm - b_norm) / delta + if g_norm < b_norm { 6.0 } else { 0.0 }) / 6.0
+        } else if max == g_norm {
+            ((b_norm - r_norm) / delta + 2.0) / 6.0
+        } else {
+            ((r_norm - g_norm) / delta + 4.0) / 6.0
+        };
+
+        (h * 360.0, s)
+    };
+
+    (h, l * 255.0, s * 255.0)
+}
+
+/// Convert HLS (H: 0-360, L: 0-255, S: 0-255) to RGB (0-255)
+fn hls_to_rgb(h: f64, l: f64, s: f64) -> (u8, u8, u8) {
+    let l_norm = l / 255.0;
+    let s_norm = s / 255.0;
+
+    if s_norm == 0.0 {
+        let val = (l_norm * 255.0).round() as u8;
+        return (val, val, val);
+    }
+
+    let q = if l_norm < 0.5 {
+        l_norm * (1.0 + s_norm)
+    } else {
+        l_norm + s_norm - l_norm * s_norm
+    };
+    let p = 2.0 * l_norm - q;
+
+    let h_norm = h / 360.0;
+
+    let hue_to_rgb = |mut t: f64| -> f64 {
+        if t < 0.0 {
+            t += 1.0;
+        }
+        if t > 1.0 {
+            t -= 1.0;
+        }
+        if t < 1.0 / 6.0 {
+            p + (q - p) * 6.0 * t
+        } else if t < 0.5 {
+            q
+        } else if t < 2.0 / 3.0 {
+            p + (q - p) * (2.0 / 3.0 - t) * 6.0
+        } else {
+            p
+        }
+    };
+
+    let r = (hue_to_rgb(h_norm + 1.0 / 3.0) * 255.0).round().clamp(0.0, 255.0) as u8;
+    let g = (hue_to_rgb(h_norm) * 255.0).round().clamp(0.0, 255.0) as u8;
+    let b = (hue_to_rgb(h_norm - 1.0 / 3.0) * 255.0).round().clamp(0.0, 255.0) as u8;
+
+    (r, g, b)
 }
 
 /// Font style information
@@ -465,4 +541,45 @@ fn test_is_date_format() {
         detect_custom_number_format("#,##0.00\\ _M\"H\"_);[Red]#,##0.00\\ _M\"S\"_)"),
         CellFormat::Other
     );
+}
+
+#[test]
+fn test_color_tint() {
+    // Test examples from OOXML spec
+    // Example 1: Darken 50% - Lum = 200, tint = -0.5, expected Lum' = 100
+    let gray_200 = Color { r: 200, g: 200, b: 200, a: 255 };
+    let (_, l, _) = rgb_to_hls(gray_200.r, gray_200.g, gray_200.b);
+    assert!((l - 200.0).abs() < 1.0, "Lightness should be ~200");
+
+    let darkened = gray_200.with_tint(-0.5);
+    let (_, l_dark, _) = rgb_to_hls(darkened.r, darkened.g, darkened.b);
+    assert!((l_dark - 100.0).abs() < 1.0, "Darkened lightness should be ~100, got {}", l_dark);
+
+    // Example 2: Lighten 75% - Lum = 100, tint = 0.75, expected Lum' = 217
+    let gray_100 = Color { r: 100, g: 100, b: 100, a: 255 };
+    let (_, l, _) = rgb_to_hls(gray_100.r, gray_100.g, gray_100.b);
+    assert!((l - 100.0).abs() < 1.0, "Lightness should be ~100");
+
+    let lightened = gray_100.with_tint(0.75);
+    let (_, l_light, _) = rgb_to_hls(lightened.r, lightened.g, lightened.b);
+    assert!((l_light - 217.0).abs() < 2.0, "Lightened lightness should be ~217, got {}", l_light);
+
+    // Test edge cases
+    // Darken 100% (make black)
+    let darkened_full = gray_200.with_tint(-1.0);
+    assert_eq!(darkened_full, Color { r: 0, g: 0, b: 0, a: 255 });
+
+    // Lighten 100% (make white)
+    let lightened_full = gray_100.with_tint(1.0);
+    assert_eq!(lightened_full, Color { r: 255, g: 255, b: 255, a: 255 });
+
+    // No tint (should remain unchanged)
+    let unchanged = gray_200.with_tint(0.0);
+    assert_eq!(unchanged, gray_200);
+
+    // Test with a colored value (should preserve hue and saturation)
+    let red = Color { r: 255, g: 0, b: 0, a: 255 };
+    let darkened_red = red.with_tint(-0.5);
+    // Should still be reddish, just darker
+    assert!(darkened_red.r > darkened_red.g && darkened_red.r > darkened_red.b);
 }
