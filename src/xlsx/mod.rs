@@ -5,6 +5,7 @@
 #![warn(missing_docs)]
 
 mod cells_reader;
+mod theme;
 
 use std::borrow::Cow;
 use std::collections::BTreeMap;
@@ -14,14 +15,17 @@ use std::str::FromStr;
 
 use log::warn;
 use quick_xml::events::attributes::{Attribute, Attributes};
-use quick_xml::events::Event;
+use quick_xml::events::{BytesStart, Event};
 use quick_xml::name::QName;
 use quick_xml::Reader as XmlReader;
 use zip::read::{ZipArchive, ZipFile};
 use zip::result::ZipError;
 
 use crate::datatype::DataRef;
-use crate::formats::{builtin_format_by_id, detect_custom_number_format, CellFormat, CellStyle, Color, FillStyle, FontStyle};
+use crate::formats::{
+    builtin_format_by_id, detect_custom_number_format, CellFormat, CellStyle, Color, FillStyle,
+    FontStyle,
+};
 use crate::utils::{unescape_entity_to_buffer, unescape_xml};
 use crate::vba::VbaProject;
 use crate::{
@@ -29,6 +33,15 @@ use crate::{
     SheetType, SheetVisible, Table,
 };
 pub use cells_reader::XlsxCellReader;
+use theme::parse_theme;
+pub use theme::Theme;
+
+#[derive(Clone, Default)]
+struct XfInfo {
+    font_id: Option<usize>,
+    fill_id: Option<usize>,
+    num_fmt_id: Option<u32>,
+}
 
 pub(crate) type XlReader<'a, RS> = XmlReader<BufReader<ZipFile<'a, RS>>>;
 
@@ -248,6 +261,8 @@ pub struct Xlsx<RS> {
     formats: Vec<CellFormat>,
     /// Resolved cell styles with font, fill, and number format information
     pub styles: Vec<CellStyle>,
+    /// Workbook theme colors (if available)
+    pub theme: Option<Theme>,
     /// Number format strings (numFmtId -> formatCode)
     pub number_formats: BTreeMap<u32, String>,
     /// 1904 datetime system
@@ -294,6 +309,63 @@ impl<RS: Read + Seek> Xlsx<RS> {
         Ok(())
     }
 
+    fn read_theme(&mut self) -> Result<(), XlsxError> {
+        let theme_target = {
+            let mut xml = match xml_reader(&mut self.zip, "xl/_rels/workbook.xml.rels") {
+                None => return Ok(()),
+                Some(x) => x?,
+            };
+
+            let mut buf = Vec::with_capacity(128);
+            let mut theme_target: Option<String> = None;
+            loop {
+                buf.clear();
+                match xml.read_event_into(&mut buf) {
+                    Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"Relationship" => {
+                        let mut target = None;
+                        let mut typ = None;
+                        for a in e.attributes() {
+                            match a.map_err(XlsxError::XmlAttr)? {
+                                Attribute {
+                                    key: QName(b"Target"),
+                                    value: v,
+                                } => target = Some(xml.decoder().decode(&v)?.into_owned()),
+                                Attribute {
+                                    key: QName(b"Type"),
+                                    value: v,
+                                } => typ = Some(xml.decoder().decode(&v)?.into_owned()),
+                                _ => (),
+                            }
+                        }
+                        if let (Some(t), Some(type_name)) = (target, typ) {
+                            if type_name
+                                == "http://schemas.openxmlformats.org/officeDocument/2006/relationships/theme"
+                            {
+                                theme_target = Some(normalize_relationship_target(&t));
+                                break;
+                            }
+                        }
+                    }
+                    Ok(Event::End(ref e)) if e.local_name().as_ref() == b"Relationships" => break,
+                    Ok(Event::Eof) => return Err(XlsxError::XmlEof("Relationships")),
+                    Err(e) => return Err(XlsxError::Xml(e)),
+                    _ => (),
+                }
+            }
+            theme_target
+        };
+
+        if let Some(target) = theme_target {
+            if let Some(reader) = xml_reader(&mut self.zip, &target) {
+                let mut reader = reader?;
+                let theme = parse_theme(&mut reader)?;
+                self.theme = Some(theme);
+            }
+        }
+
+        Ok(())
+    }
+
     fn read_styles(&mut self) -> Result<(), XlsxError> {
         let mut xml = match xml_reader(&mut self.zip, "xl/styles.xml") {
             None => return Ok(()),
@@ -303,10 +375,12 @@ impl<RS: Read + Seek> Xlsx<RS> {
         let mut number_formats = BTreeMap::new();
         let mut fonts = Vec::new();
         let mut fills = Vec::new();
+        let mut cell_style_xfs: Vec<XfInfo> = Vec::new();
 
         let mut buf = Vec::with_capacity(1024);
         let mut inner_buf = Vec::with_capacity(1024);
         let mut deep_buf = Vec::with_capacity(1024);
+        let theme = self.theme.clone();
 
         loop {
             buf.clear();
@@ -352,7 +426,9 @@ impl<RS: Read + Seek> Xlsx<RS> {
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"fonts" => loop {
                     inner_buf.clear();
                     match xml.read_event_into(&mut inner_buf) {
-                        Ok(Event::Start(ref font_elem)) if font_elem.local_name().as_ref() == b"font" => {
+                        Ok(Event::Start(ref font_elem))
+                            if font_elem.local_name().as_ref() == b"font" =>
+                        {
                             let mut bold = None;
                             let mut italic = None;
                             let mut color = None;
@@ -365,25 +441,53 @@ impl<RS: Read + Seek> Xlsx<RS> {
                                             b"b" => bold = Some(true),
                                             b"i" => italic = Some(true),
                                             b"color" => {
-                                                if let Some(rgb) = get_attribute(e.attributes(), QName(b"rgb"))? {
-                                                    let rgb_str = std::str::from_utf8(rgb).unwrap_or("");
-                                                    color = Color::from_argb_hex(rgb_str).ok();
+                                                if let Some(resolved) =
+                                                    resolve_color(theme.as_ref(), e)?
+                                                {
+                                                    color = Some(resolved);
                                                 }
                                             }
                                             _ => (),
                                         }
                                     }
-                                    Ok(Event::End(ref e)) if e.local_name().as_ref() == b"font" => break,
+                                    Ok(Event::End(ref e)) if e.local_name().as_ref() == b"font" => {
+                                        break
+                                    }
                                     Ok(Event::Eof) => return Err(XlsxError::XmlEof("font")),
                                     Err(e) => return Err(XlsxError::Xml(e)),
                                     _ => (),
                                 }
                             }
 
-                            fonts.push(FontStyle { bold, italic, color });
+                            fonts.push(FontStyle {
+                                bold,
+                                italic,
+                                color,
+                            });
                         }
                         Ok(Event::End(ref e)) if e.local_name().as_ref() == b"fonts" => break,
                         Ok(Event::Eof) => return Err(XlsxError::XmlEof("fonts")),
+                        Err(e) => return Err(XlsxError::Xml(e)),
+                        _ => (),
+                    }
+                },
+                // Parse <cellStyleXfs>
+                Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"cellStyleXfs" => loop {
+                    inner_buf.clear();
+                    match xml.read_event_into(&mut inner_buf) {
+                        Ok(Event::Start(ref xf)) if xf.local_name().as_ref() == b"xf" => {
+                            let info = xf_info_from_element(xf)?;
+                            cell_style_xfs.push(info);
+                            xml.read_to_end_into(xf.name(), &mut deep_buf)?;
+                        }
+                        Ok(Event::Empty(ref xf)) if xf.local_name().as_ref() == b"xf" => {
+                            let info = xf_info_from_element(xf)?;
+                            cell_style_xfs.push(info);
+                        }
+                        Ok(Event::End(ref end)) if end.local_name().as_ref() == b"cellStyleXfs" => {
+                            break
+                        }
+                        Ok(Event::Eof) => return Err(XlsxError::XmlEof("cellStyleXfs")),
                         Err(e) => return Err(XlsxError::Xml(e)),
                         _ => (),
                     }
@@ -392,19 +496,24 @@ impl<RS: Read + Seek> Xlsx<RS> {
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"fills" => loop {
                     inner_buf.clear();
                     match xml.read_event_into(&mut inner_buf) {
-                        Ok(Event::Start(ref fill_elem)) if fill_elem.local_name().as_ref() == b"fill" => {
+                        Ok(Event::Start(ref fill_elem))
+                            if fill_elem.local_name().as_ref() == b"fill" =>
+                        {
                             let mut background_color = None;
 
                             loop {
                                 deep_buf.clear();
                                 match xml.read_event_into(&mut deep_buf) {
-                                    Ok(Event::Start(ref e) | Event::Empty(ref e)) if e.local_name().as_ref() == b"fgColor" => {
-                                        if let Some(rgb) = get_attribute(e.attributes(), QName(b"rgb"))? {
-                                            let rgb_str = std::str::from_utf8(rgb).unwrap_or("");
-                                            background_color = Color::from_argb_hex(rgb_str).ok();
+                                    Ok(Event::Start(ref e) | Event::Empty(ref e))
+                                        if e.local_name().as_ref() == b"fgColor" =>
+                                    {
+                                        if let Some(resolved) = resolve_color(theme.as_ref(), e)? {
+                                            background_color = Some(resolved);
                                         }
                                     }
-                                    Ok(Event::End(ref e)) if e.local_name().as_ref() == b"fill" => break,
+                                    Ok(Event::End(ref e)) if e.local_name().as_ref() == b"fill" => {
+                                        break
+                                    }
                                     Ok(Event::Eof) => return Err(XlsxError::XmlEof("fill")),
                                     Err(e) => return Err(XlsxError::Xml(e)),
                                     _ => (),
@@ -423,26 +532,68 @@ impl<RS: Read + Seek> Xlsx<RS> {
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"cellXfs" => loop {
                     inner_buf.clear();
                     match xml.read_event_into(&mut inner_buf) {
-                        Ok(Event::Start(ref e) | Event::Empty(ref e)) if e.local_name().as_ref() == b"xf" => {
+                        Ok(Event::Start(ref e) | Event::Empty(ref e))
+                            if e.local_name().as_ref() == b"xf" =>
+                        {
                             let mut num_fmt_id = None;
                             let mut font_id = None;
                             let mut fill_id = None;
+                            let mut xf_id = None;
                             let mut apply_font = false;
                             let mut apply_fill = false;
 
-                            for a in e.attributes().filter_map(|a| a.ok()) {
-                                match a.key {
-                                    QName(b"numFmtId") => num_fmt_id = atoi_simd::parse::<u32>(&a.value).ok(),
-                                    QName(b"fontId") => font_id = atoi_simd::parse::<usize>(&a.value).ok(),
-                                    QName(b"fillId") => fill_id = atoi_simd::parse::<usize>(&a.value).ok(),
-                                    QName(b"applyFont") => apply_font = &*a.value == b"1",
-                                    QName(b"applyFill") => apply_fill = &*a.value == b"1",
+                            for attr in e.attributes() {
+                                let attr = attr.map_err(XlsxError::XmlAttr)?;
+                                match attr.key {
+                                    QName(b"numFmtId") => {
+                                        num_fmt_id =
+                                            atoi_simd::parse::<u32>(attr.value.as_ref()).ok();
+                                    }
+                                    QName(b"fontId") => {
+                                        font_id =
+                                            atoi_simd::parse::<usize>(attr.value.as_ref()).ok();
+                                    }
+                                    QName(b"fillId") => {
+                                        fill_id =
+                                            atoi_simd::parse::<usize>(attr.value.as_ref()).ok();
+                                    }
+                                    QName(b"xfId") => {
+                                        xf_id = atoi_simd::parse::<usize>(attr.value.as_ref()).ok();
+                                    }
+                                    QName(b"applyFont") => {
+                                        apply_font =
+                                            matches!(attr.value.as_ref(), b"1" | b"true" | b"TRUE");
+                                    }
+                                    QName(b"applyFill") => {
+                                        apply_fill =
+                                            matches!(attr.value.as_ref(), b"1" | b"true" | b"TRUE");
+                                    }
                                     _ => (),
                                 }
                             }
 
+                            let base = xf_id
+                                .and_then(|id| cell_style_xfs.get(id).cloned())
+                                .unwrap_or_default();
+
+                            let base_font = base.font_id.and_then(|id| fonts.get(id).cloned());
+                            let direct_font = font_id.and_then(|id| fonts.get(id).cloned());
+                            let font = match (apply_font, &direct_font, &base_font) {
+                                (_, Some(_), None) | (true, Some(_), _) => direct_font,
+                                _ => base_font,
+                            };
+
+                            let base_fill = base.fill_id.and_then(|id| fills.get(id).cloned());
+                            let direct_fill = fill_id.and_then(|id| fills.get(id).cloned());
+                            let fill = match (apply_fill, &direct_fill, &base_fill) {
+                                (_, Some(_), None) | (true, Some(_), _) => direct_fill,
+                                _ => base_fill,
+                            };
+
+                            let effective_num_fmt_id = num_fmt_id.or(base.num_fmt_id);
+
                             // Build CellFormat for backward compatibility
-                            let cell_format = if let Some(id) = num_fmt_id {
+                            let cell_format = if let Some(id) = effective_num_fmt_id {
                                 let id_bytes = id.to_string().into_bytes();
                                 match number_formats.get(&id_bytes) {
                                     Some(fmt) => detect_custom_number_format(fmt),
@@ -453,23 +604,10 @@ impl<RS: Read + Seek> Xlsx<RS> {
                             };
                             self.formats.push(cell_format);
 
-                            // Build CellStyle
-                            let font = if apply_font {
-                                font_id.and_then(|id| fonts.get(id).cloned())
-                            } else {
-                                None
-                            };
-
-                            let fill = if apply_fill {
-                                fill_id.and_then(|id| fills.get(id).cloned())
-                            } else {
-                                None
-                            };
-
                             self.styles.push(CellStyle {
                                 font,
                                 fill,
-                                number_format_id: num_fmt_id,
+                                number_format_id: effective_num_fmt_id,
                             });
                         }
                         Ok(Event::End(ref e)) if e.local_name().as_ref() == b"cellXfs" => break,
@@ -1604,6 +1742,7 @@ impl<RS: Read + Seek> Reader<RS> for Xlsx<RS> {
             strings: Vec::new(),
             formats: Vec::new(),
             styles: Vec::new(),
+            theme: None,
             number_formats: BTreeMap::new(),
             is_1904: false,
             sheets: Vec::new(),
@@ -1615,6 +1754,7 @@ impl<RS: Read + Seek> Reader<RS> for Xlsx<RS> {
             options: XlsxOptions::default(),
         };
         xlsx.read_shared_strings()?;
+        xlsx.read_theme()?;
         xlsx.read_styles()?;
         let relationships = xlsx.read_relationships()?;
         xlsx.read_workbook(&relationships)?;
@@ -1765,6 +1905,110 @@ impl<RS: Read + Seek> ReaderRef<RS> for Xlsx<RS> {
 
         Ok(Range::from_sparse(cells))
     }
+}
+
+fn normalize_relationship_target(target: &str) -> String {
+    if target.starts_with("/xl/") {
+        return target[1..].to_string();
+    }
+    if target.starts_with("xl/") {
+        return target.to_string();
+    }
+
+    use std::path::{Component, PathBuf};
+
+    let mut base = PathBuf::from("xl");
+    base.push(target);
+
+    let mut normalized = PathBuf::new();
+    for component in base.components() {
+        match component {
+            Component::ParentDir => {
+                normalized.pop();
+            }
+            Component::CurDir => {}
+            Component::Normal(part) => normalized.push(part),
+            Component::RootDir => normalized.clear(),
+            Component::Prefix(prefix) => normalized.push(prefix.as_os_str()),
+        }
+    }
+
+    normalized.to_string_lossy().replace('\\', "/")
+}
+
+fn resolve_color(
+    theme: Option<&Theme>,
+    element: &BytesStart<'_>,
+) -> Result<Option<Color>, XlsxError> {
+    let mut rgb_color: Option<Color> = None;
+    let mut theme_index: Option<usize> = None;
+    let mut tint: Option<f64> = None;
+
+    for attr in element.attributes() {
+        match attr.map_err(XlsxError::XmlAttr)? {
+            Attribute {
+                key: QName(b"rgb"),
+                value,
+            } => {
+                if let Ok(hex) = std::str::from_utf8(value.as_ref()) {
+                    if let Ok(color) = Color::from_argb_hex(hex) {
+                        rgb_color = Some(color);
+                    }
+                }
+            }
+            Attribute {
+                key: QName(b"theme"),
+                value,
+            } => {
+                theme_index = atoi_simd::parse::<usize>(value.as_ref()).ok();
+            }
+            Attribute {
+                key: QName(b"tint"),
+                value,
+            } => {
+                if let Ok(text) = std::str::from_utf8(value.as_ref()) {
+                    if let Ok(parsed) = text.parse::<f64>() {
+                        tint = Some(parsed);
+                    }
+                }
+            }
+            _ => (),
+        }
+    }
+
+    let mut color = if let Some(rgb) = rgb_color {
+        Some(rgb)
+    } else if let Some(idx) = theme_index {
+        theme.and_then(|t| t.color(idx))
+    } else {
+        None
+    };
+
+    if let (Some(base), Some(tint_value)) = (color, tint) {
+        color = Some(base.with_tint(tint_value));
+    }
+
+    Ok(color)
+}
+
+fn xf_info_from_element(e: &BytesStart<'_>) -> Result<XfInfo, XlsxError> {
+    let mut info = XfInfo::default();
+    for attr in e.attributes() {
+        let attr = attr.map_err(XlsxError::XmlAttr)?;
+        match attr.key {
+            QName(b"fontId") => {
+                info.font_id = atoi_simd::parse::<usize>(attr.value.as_ref()).ok();
+            }
+            QName(b"fillId") => {
+                info.fill_id = atoi_simd::parse::<usize>(attr.value.as_ref()).ok();
+            }
+            QName(b"numFmtId") => {
+                info.num_fmt_id = atoi_simd::parse::<u32>(attr.value.as_ref()).ok();
+            }
+            _ => (),
+        }
+    }
+    Ok(info)
 }
 
 fn xml_reader<'a, RS: Read + Seek>(
