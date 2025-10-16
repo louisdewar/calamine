@@ -134,11 +134,12 @@ where
                         (self.row_index, self.col_index)
                     };
                     let mut value = DataRef::Empty;
+                    let mut style_index = None;
                     loop {
                         self.cell_buf.clear();
                         match self.xml.read_event_into(&mut self.cell_buf) {
                             Ok(Event::Start(ref e)) => {
-                                value = read_value(
+                                let (v, s) = read_value(
                                     self.strings,
                                     self.formats,
                                     self.is_1904,
@@ -146,6 +147,8 @@ where
                                     e,
                                     c_element,
                                 )?;
+                                value = v;
+                                style_index = s;
                             }
                             Ok(Event::End(ref e)) if e.local_name().as_ref() == b"c" => break,
                             Ok(Event::Eof) => return Err(XlsxError::XmlEof("c")),
@@ -154,7 +157,7 @@ where
                         }
                     }
                     self.col_index += 1;
-                    return Ok(Some(Cell::new(pos, value)));
+                    return Ok(Some(Cell::new(pos, value, style_index)));
                 }
                 Ok(Event::End(ref e)) if e.local_name().as_ref() == b"sheetData" => {
                     return Ok(None);
@@ -271,7 +274,7 @@ where
                         }
                     }
                     self.col_index += 1;
-                    return Ok(Some(Cell::new(pos, value.unwrap_or_default())));
+                    return Ok(Some(Cell::new(pos, value.unwrap_or_default(), None)));
                 }
                 Ok(Event::End(ref e)) if e.local_name().as_ref() == b"sheetData" => {
                     return Ok(None);
@@ -291,11 +294,16 @@ fn read_value<'s, RS>(
     xml: &mut XlReader<'_, RS>,
     e: &BytesStart<'_>,
     c_element: &BytesStart<'_>,
-) -> Result<DataRef<'s>, XlsxError>
+) -> Result<(DataRef<'s>, Option<u32>), XlsxError>
 where
     RS: Read + Seek,
 {
-    Ok(match e.local_name().as_ref() {
+    let style_index = match get_attribute(c_element.attributes(), QName(b"s")) {
+        Ok(Some(style)) => atoi_simd::parse::<u32>(style).ok(),
+        _ => None,
+    };
+
+    let data = match e.local_name().as_ref() {
         b"is" => {
             // inlineStr
             read_string(xml, e.name())?.map_or(DataRef::Empty, DataRef::String)
@@ -314,14 +322,16 @@ where
                     _ => (),
                 }
             }
-            read_v(v, strings, formats, c_element, is_1904)?
+            read_v(v, strings, formats, c_element, is_1904)?.0
         }
         b"f" => {
             xml.read_to_end_into(e.name(), &mut Vec::new())?;
             DataRef::Empty
         }
         _n => return Err(XlsxError::UnexpectedNode("v, f, or is")),
-    })
+    };
+
+    Ok((data, style_index))
 }
 
 /// read the contents of a <v> cell
@@ -331,44 +341,44 @@ fn read_v<'s>(
     formats: &[CellFormat],
     c_element: &BytesStart<'_>,
     is_1904: bool,
-) -> Result<DataRef<'s>, XlsxError> {
-    let cell_format = match get_attribute(c_element.attributes(), QName(b"s")) {
-        Ok(Some(style)) => {
-            let id = atoi_simd::parse::<usize>(style).unwrap_or(0);
-            formats.get(id)
-        }
-        _ => Some(&CellFormat::Other),
+) -> Result<(DataRef<'s>, Option<u32>), XlsxError> {
+    let style_index = match get_attribute(c_element.attributes(), QName(b"s")) {
+        Ok(Some(style)) => atoi_simd::parse::<u32>(style).ok(),
+        _ => None,
     };
-    match get_attribute(c_element.attributes(), QName(b"t"))? {
+    let cell_format = style_index
+        .and_then(|id| formats.get(id as usize))
+        .or(Some(&CellFormat::Other));
+    let data = match get_attribute(c_element.attributes(), QName(b"t"))? {
         Some(b"s") => {
             // shared string
             let idx = atoi_simd::parse::<usize>(v.as_bytes()).unwrap_or(0);
-            Ok(DataRef::SharedString(&strings[idx]))
+            DataRef::SharedString(&strings[idx])
         }
         Some(b"b") => {
             // boolean
-            Ok(DataRef::Bool(v != "0"))
+            DataRef::Bool(v != "0")
         }
         Some(b"e") => {
             // error
-            Ok(DataRef::Error(v.parse()?))
+            DataRef::Error(v.parse()?)
         }
         Some(b"d") => {
             // date
-            Ok(DataRef::DateTimeIso(v))
+            DataRef::DateTimeIso(v)
         }
         Some(b"str") => {
             // string
-            Ok(DataRef::String(v))
+            DataRef::String(v)
         }
         Some(b"n") => {
             // n - number
             if v.is_empty() {
-                Ok(DataRef::Empty)
+                DataRef::Empty
             } else {
                 v.parse()
                     .map(|n| format_excel_f64_ref(n, cell_format, is_1904))
-                    .map_err(XlsxError::ParseFloat)
+                    .map_err(XlsxError::ParseFloat)?
             }
         }
         None => {
@@ -376,20 +386,21 @@ fn read_v<'s>(
             // String if this fails.
             v.parse()
                 .map(|n| format_excel_f64_ref(n, cell_format, is_1904))
-                .or(Ok(DataRef::String(v)))
+                .unwrap_or(DataRef::String(v))
         }
         Some(b"is") => {
             // this case should be handled in outer loop over cell elements, in which
             // case read_inline_str is called instead. Case included here for completeness.
-            Err(XlsxError::Unexpected(
+            return Err(XlsxError::Unexpected(
                 "called read_value on a cell of type inlineStr",
-            ))
+            ));
         }
         Some(t) => {
             let t = std::str::from_utf8(t).unwrap_or("<utf8 error>").to_string();
-            Err(XlsxError::CellTAttribute(t))
+            return Err(XlsxError::CellTAttribute(t));
         }
-    }
+    };
+    Ok((data, style_index))
 }
 
 fn read_formula<RS>(xml: &mut XlReader<RS>, e: &BytesStart) -> Result<Option<String>, XlsxError>

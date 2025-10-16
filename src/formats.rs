@@ -11,6 +11,67 @@ pub enum CellFormat {
     TimeDelta,
 }
 
+/// ARGB color representation
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Color {
+    /// Red component (0-255)
+    pub r: u8,
+    /// Green component (0-255)
+    pub g: u8,
+    /// Blue component (0-255)
+    pub b: u8,
+    /// Alpha component (0-255, 255 = fully opaque)
+    pub a: u8,
+}
+
+impl Color {
+    /// Parse from ARGB hex string (e.g., "FFFF0000" for opaque red)
+    pub fn from_argb_hex(hex: &str) -> Result<Self, std::num::ParseIntError> {
+        if hex.len() != 8 {
+            return Err(u8::from_str_radix("", 16).unwrap_err());
+        }
+        let a = u8::from_str_radix(&hex[0..2], 16)?;
+        let r = u8::from_str_radix(&hex[2..4], 16)?;
+        let g = u8::from_str_radix(&hex[4..6], 16)?;
+        let b = u8::from_str_radix(&hex[6..8], 16)?;
+        Ok(Self { r, g, b, a })
+    }
+
+    /// Convert to ARGB hex string (e.g., "FFFF0000")
+    pub fn to_argb_hex(&self) -> String {
+        format!("{:02X}{:02X}{:02X}{:02X}", self.a, self.r, self.g, self.b)
+    }
+}
+
+/// Font style information
+#[derive(Debug, Clone, PartialEq)]
+pub struct FontStyle {
+    /// Bold font
+    pub bold: Option<bool>,
+    /// Italic font
+    pub italic: Option<bool>,
+    /// Font color
+    pub color: Option<Color>,
+}
+
+/// Fill style information
+#[derive(Debug, Clone, PartialEq)]
+pub struct FillStyle {
+    /// Background color
+    pub background_color: Option<Color>,
+}
+
+/// Complete cell style with all formatting
+#[derive(Debug, Clone, PartialEq)]
+pub struct CellStyle {
+    /// Font styling
+    pub font: Option<FontStyle>,
+    /// Fill styling
+    pub fill: Option<FillStyle>,
+    /// Number format ID
+    pub number_format_id: Option<u32>,
+}
+
 /// Check excel number format is datetime
 pub fn detect_custom_number_format(format: &str) -> CellFormat {
     let mut escaped = false;
