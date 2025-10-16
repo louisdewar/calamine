@@ -458,7 +458,7 @@ impl<RS: Read + Seek> Xls<RS> {
                     0x0207 => {
                         // 519 String (formula value)
                         let val = Data::String(parse_string(r.data, &encoding, biff)?);
-                        cells.push(Cell::new(fmla_pos, val));
+                        cells.push(Cell::new(fmla_pos, val, None));
                     }
                     0x027E => cells.push(parse_rk(r.data, &self.formats, self.is_1904)?), // 638: Rk
                     0x00FD => cells.extend(parse_label_sst(r.data, &strings)?), // LabelSst
@@ -480,7 +480,7 @@ impl<RS: Read + Seek> Xls<RS> {
                         if let Some(val) = parse_formula_value(&r.data[6..14])? {
                             // If the value is a string
                             // it will appear in 0x0207 record coming next
-                            cells.push(Cell::new(fmla_pos, val));
+                            cells.push(Cell::new(fmla_pos, val, None));
                         }
                         let fmla = parse_formula(
                             &r.data[20..],
@@ -496,7 +496,7 @@ impl<RS: Read + Seek> Xls<RS> {
                                  for cell ({row}, {col}): {e:?}"
                             )
                         });
-                        formulas.push(Cell::new(fmla_pos, fmla));
+                        formulas.push(Cell::new(fmla_pos, fmla, None));
                     }
                     _ => (),
                 }
@@ -623,7 +623,7 @@ fn parse_number(r: &[u8], formats: &[CellFormat], is_1904: bool) -> Result<Cell<
     let v = read_f64(&r[6..]);
     let format = formats.get(read_u16(&r[4..]) as usize);
 
-    Ok(Cell::new((row, col), format_excel_f64(v, format, is_1904)))
+    Ok(Cell::new((row, col), format_excel_f64(v, format, is_1904), None))
 }
 
 fn parse_bool_err(r: &[u8]) -> Result<Cell<Data>, XlsError> {
@@ -638,8 +638,8 @@ fn parse_bool_err(r: &[u8]) -> Result<Cell<Data>, XlsError> {
     let col = read_u16(&r[2..]);
     let pos = (row as u32, col as u32);
     match r[7] {
-        0x00 => Ok(Cell::new(pos, Data::Bool(r[6] != 0))),
-        0x01 => Ok(Cell::new(pos, parse_err(r[6])?)),
+        0x00 => Ok(Cell::new(pos, Data::Bool(r[6] != 0), None)),
+        0x01 => Ok(Cell::new(pos, parse_err(r[6])?, None)),
         e => Err(XlsError::Unrecognized {
             typ: "fError",
             val: e,
@@ -678,6 +678,7 @@ fn parse_rk(r: &[u8], formats: &[CellFormat], is_1904: bool) -> Result<Cell<Data
     Ok(Cell::new(
         (row as u32, col as u32),
         rk_num(&r[4..10], formats, is_1904),
+        None,
     ))
 }
 
@@ -730,7 +731,7 @@ fn parse_mul_rk(
     let mut col = col_first as u32;
 
     for rk in r[4..r.len() - 2].chunks(6) {
-        cells.push(Cell::new((row as u32, col), rk_num(rk, formats, is_1904)));
+        cells.push(Cell::new((row as u32, col), rk_num(rk, formats, is_1904), None));
         col += 1;
     }
     Ok(())
@@ -825,6 +826,7 @@ fn parse_label(r: &[u8], encoding: &XlsEncoding, biff: Biff) -> Result<Cell<Data
     Ok(Cell::new(
         (row as u32, col as u32),
         Data::String(parse_string(&r[6..], encoding, biff)?),
+        None,
     ))
 }
 
@@ -844,6 +846,7 @@ fn parse_label_sst(r: &[u8], strings: &[String]) -> Result<Option<Cell<Data>>, X
             return Ok(Some(Cell::new(
                 (row as u32, col as u32),
                 Data::String(s.clone()),
+                None,
             )));
         }
     }

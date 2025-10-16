@@ -21,7 +21,7 @@ use zip::read::{ZipArchive, ZipFile};
 use zip::result::ZipError;
 
 use crate::datatype::DataRef;
-use crate::formats::{builtin_format_by_id, detect_custom_number_format, CellFormat};
+use crate::formats::{builtin_format_by_id, detect_custom_number_format, CellFormat, CellStyle, Color, FillStyle, FontStyle};
 use crate::utils::{unescape_entity_to_buffer, unescape_xml};
 use crate::vba::VbaProject;
 use crate::{
@@ -246,6 +246,10 @@ pub struct Xlsx<RS> {
     tables: Tables,
     /// Cell (number) formats
     formats: Vec<CellFormat>,
+    /// Resolved cell styles with font, fill, and number format information
+    pub styles: Vec<CellStyle>,
+    /// Number format strings (numFmtId -> formatCode)
+    pub number_formats: BTreeMap<u32, String>,
     /// 1904 datetime system
     is_1904: bool,
     /// Metadata
@@ -297,24 +301,33 @@ impl<RS: Read + Seek> Xlsx<RS> {
         };
 
         let mut number_formats = BTreeMap::new();
+        let mut fonts = Vec::new();
+        let mut fills = Vec::new();
 
         let mut buf = Vec::with_capacity(1024);
         let mut inner_buf = Vec::with_capacity(1024);
+        let mut deep_buf = Vec::with_capacity(1024);
+
         loop {
             buf.clear();
             match xml.read_event_into(&mut buf) {
+                // Parse <numFmts>
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"numFmts" => loop {
                     inner_buf.clear();
                     match xml.read_event_into(&mut inner_buf) {
                         Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"numFmt" => {
-                            let mut id = Vec::new();
+                            let mut id = None;
+                            let mut id_bytes = Vec::new();
                             let mut format = String::new();
                             for a in e.attributes() {
                                 match a? {
                                     Attribute {
                                         key: QName(b"numFmtId"),
                                         value: v,
-                                    } => id.extend_from_slice(&v),
+                                    } => {
+                                        id = atoi_simd::parse::<u32>(&v).ok();
+                                        id_bytes.extend_from_slice(&v);
+                                    }
                                     Attribute {
                                         key: QName(b"formatCode"),
                                         value: v,
@@ -322,8 +335,11 @@ impl<RS: Read + Seek> Xlsx<RS> {
                                     _ => (),
                                 }
                             }
-                            if !format.is_empty() {
-                                number_formats.insert(id, format);
+                            if let Some(id) = id {
+                                if !format.is_empty() {
+                                    self.number_formats.insert(id, format.clone());
+                                    number_formats.insert(id_bytes, format);
+                                }
                             }
                         }
                         Ok(Event::End(ref e)) if e.local_name().as_ref() == b"numFmts" => break,
@@ -332,21 +348,129 @@ impl<RS: Read + Seek> Xlsx<RS> {
                         _ => (),
                     }
                 },
+                // Parse <fonts>
+                Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"fonts" => loop {
+                    inner_buf.clear();
+                    match xml.read_event_into(&mut inner_buf) {
+                        Ok(Event::Start(ref font_elem)) if font_elem.local_name().as_ref() == b"font" => {
+                            let mut bold = None;
+                            let mut italic = None;
+                            let mut color = None;
+
+                            loop {
+                                deep_buf.clear();
+                                match xml.read_event_into(&mut deep_buf) {
+                                    Ok(Event::Start(ref e) | Event::Empty(ref e)) => {
+                                        match e.local_name().as_ref() {
+                                            b"b" => bold = Some(true),
+                                            b"i" => italic = Some(true),
+                                            b"color" => {
+                                                if let Some(rgb) = get_attribute(e.attributes(), QName(b"rgb"))? {
+                                                    let rgb_str = std::str::from_utf8(rgb).unwrap_or("");
+                                                    color = Color::from_argb_hex(rgb_str).ok();
+                                                }
+                                            }
+                                            _ => (),
+                                        }
+                                    }
+                                    Ok(Event::End(ref e)) if e.local_name().as_ref() == b"font" => break,
+                                    Ok(Event::Eof) => return Err(XlsxError::XmlEof("font")),
+                                    Err(e) => return Err(XlsxError::Xml(e)),
+                                    _ => (),
+                                }
+                            }
+
+                            fonts.push(FontStyle { bold, italic, color });
+                        }
+                        Ok(Event::End(ref e)) if e.local_name().as_ref() == b"fonts" => break,
+                        Ok(Event::Eof) => return Err(XlsxError::XmlEof("fonts")),
+                        Err(e) => return Err(XlsxError::Xml(e)),
+                        _ => (),
+                    }
+                },
+                // Parse <fills>
+                Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"fills" => loop {
+                    inner_buf.clear();
+                    match xml.read_event_into(&mut inner_buf) {
+                        Ok(Event::Start(ref fill_elem)) if fill_elem.local_name().as_ref() == b"fill" => {
+                            let mut background_color = None;
+
+                            loop {
+                                deep_buf.clear();
+                                match xml.read_event_into(&mut deep_buf) {
+                                    Ok(Event::Start(ref e) | Event::Empty(ref e)) if e.local_name().as_ref() == b"fgColor" => {
+                                        if let Some(rgb) = get_attribute(e.attributes(), QName(b"rgb"))? {
+                                            let rgb_str = std::str::from_utf8(rgb).unwrap_or("");
+                                            background_color = Color::from_argb_hex(rgb_str).ok();
+                                        }
+                                    }
+                                    Ok(Event::End(ref e)) if e.local_name().as_ref() == b"fill" => break,
+                                    Ok(Event::Eof) => return Err(XlsxError::XmlEof("fill")),
+                                    Err(e) => return Err(XlsxError::Xml(e)),
+                                    _ => (),
+                                }
+                            }
+
+                            fills.push(FillStyle { background_color });
+                        }
+                        Ok(Event::End(ref e)) if e.local_name().as_ref() == b"fills" => break,
+                        Ok(Event::Eof) => return Err(XlsxError::XmlEof("fills")),
+                        Err(e) => return Err(XlsxError::Xml(e)),
+                        _ => (),
+                    }
+                },
+                // Parse <cellXfs>
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"cellXfs" => loop {
                     inner_buf.clear();
                     match xml.read_event_into(&mut inner_buf) {
-                        Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"xf" => {
-                            self.formats.push(
-                                e.attributes()
-                                    .filter_map(|a| a.ok())
-                                    .find(|a| a.key == QName(b"numFmtId"))
-                                    .map_or(CellFormat::Other, |a| {
-                                        match number_formats.get(&*a.value) {
-                                            Some(fmt) => detect_custom_number_format(fmt),
-                                            None => builtin_format_by_id(&a.value),
-                                        }
-                                    }),
-                            );
+                        Ok(Event::Start(ref e) | Event::Empty(ref e)) if e.local_name().as_ref() == b"xf" => {
+                            let mut num_fmt_id = None;
+                            let mut font_id = None;
+                            let mut fill_id = None;
+                            let mut apply_font = false;
+                            let mut apply_fill = false;
+
+                            for a in e.attributes().filter_map(|a| a.ok()) {
+                                match a.key {
+                                    QName(b"numFmtId") => num_fmt_id = atoi_simd::parse::<u32>(&a.value).ok(),
+                                    QName(b"fontId") => font_id = atoi_simd::parse::<usize>(&a.value).ok(),
+                                    QName(b"fillId") => fill_id = atoi_simd::parse::<usize>(&a.value).ok(),
+                                    QName(b"applyFont") => apply_font = &*a.value == b"1",
+                                    QName(b"applyFill") => apply_fill = &*a.value == b"1",
+                                    _ => (),
+                                }
+                            }
+
+                            // Build CellFormat for backward compatibility
+                            let cell_format = if let Some(id) = num_fmt_id {
+                                let id_bytes = id.to_string().into_bytes();
+                                match number_formats.get(&id_bytes) {
+                                    Some(fmt) => detect_custom_number_format(fmt),
+                                    None => builtin_format_by_id(&id_bytes),
+                                }
+                            } else {
+                                CellFormat::Other
+                            };
+                            self.formats.push(cell_format);
+
+                            // Build CellStyle
+                            let font = if apply_font {
+                                font_id.and_then(|id| fonts.get(id).cloned())
+                            } else {
+                                None
+                            };
+
+                            let fill = if apply_fill {
+                                fill_id.and_then(|id| fills.get(id).cloned())
+                            } else {
+                                None
+                            };
+
+                            self.styles.push(CellStyle {
+                                font,
+                                fill,
+                                number_format_id: num_fmt_id,
+                            });
                         }
                         Ok(Event::End(ref e)) if e.local_name().as_ref() == b"cellXfs" => break,
                         Ok(Event::Eof) => return Err(XlsxError::XmlEof("cellXfs")),
@@ -1479,6 +1603,8 @@ impl<RS: Read + Seek> Reader<RS> for Xlsx<RS> {
             zip: ZipArchive::new(reader)?,
             strings: Vec::new(),
             formats: Vec::new(),
+            styles: Vec::new(),
+            number_formats: BTreeMap::new(),
             is_1904: false,
             sheets: Vec::new(),
             tables: None,
@@ -1630,6 +1756,7 @@ impl<RS: Read + Seek> ReaderRef<RS> for Xlsx<RS> {
                                 cells.first().expect("cells should not be empty").pos.1,
                             ),
                             val: DataRef::Empty,
+                            style_index: None,
                         },
                     );
                 }
@@ -2624,6 +2751,8 @@ mod tests {
             sheets: vec![],
             tables: None,
             formats: vec![],
+            styles: vec![],
+            number_formats: BTreeMap::new(),
             is_1904: false,
             metadata: Metadata::default(),
             #[cfg(feature = "picture")]

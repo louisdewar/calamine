@@ -158,7 +158,7 @@ where
             break value;
         };
         let col = read_u32(&self.buf);
-        Ok(Some(Cell::new((self.row, col), value)))
+        Ok(Some(Cell::new((self.row, col), value, None)))
     }
 
     pub fn next_formula(&mut self) -> Result<Option<Cell<String>>, XlsbError> {
@@ -204,7 +204,7 @@ where
             break value;
         };
         let col = read_u32(&self.buf);
-        Ok(Some(Cell::new((self.row, col), value)))
+        Ok(Some(Cell::new((self.row, col), value, None)))
     }
 }
 

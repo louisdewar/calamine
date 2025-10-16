@@ -82,7 +82,6 @@ mod utils;
 mod auto;
 mod cfb;
 mod datatype;
-mod formats;
 mod ods;
 mod xls;
 mod xlsb;
@@ -92,6 +91,7 @@ mod de;
 mod errors;
 
 pub mod changelog;
+pub mod formats;
 pub mod vba;
 
 use serde::de::{Deserialize, DeserializeOwned, Deserializer};
@@ -476,6 +476,9 @@ pub struct Cell<T: CellType> {
 
     // The [`CellType`] value of the cell.
     val: T,
+
+    // Index into the workbook's styles array (XLSX only)
+    style_index: Option<u32>,
 }
 
 impl<T: CellType> Cell<T> {
@@ -487,6 +490,7 @@ impl<T: CellType> Cell<T> {
     ///   `(row, column)`.
     /// - `value`: The value of the cell, which must implement the [`CellType`]
     ///   trait.
+    /// - `style_index`: Optional index into the workbook's styles array (XLSX only).
     ///
     /// # Examples
     ///
@@ -495,15 +499,16 @@ impl<T: CellType> Cell<T> {
     /// ```
     /// use calamine::{Cell, Data};
     ///
-    /// let cell = Cell::new((1, 2), Data::Int(42));
+    /// let cell = Cell::new((1, 2), Data::Int(42), None);
     ///
     /// assert_eq!(&Data::Int(42), cell.get_value());
     /// ```
     ///
-    pub fn new(position: (u32, u32), value: T) -> Cell<T> {
+    pub fn new(position: (u32, u32), value: T, style_index: Option<u32>) -> Cell<T> {
         Cell {
             pos: position,
             val: value,
+            style_index,
         }
     }
 
@@ -516,7 +521,7 @@ impl<T: CellType> Cell<T> {
     /// ```
     /// use calamine::{Cell, Data};
     ///
-    /// let cell = Cell::new((1, 2), Data::Int(42));
+    /// let cell = Cell::new((1, 2), Data::Int(42), None);
     ///
     /// assert_eq!((1, 2), cell.get_position());
     /// ```
@@ -534,13 +539,34 @@ impl<T: CellType> Cell<T> {
     /// ```
     /// use calamine::{Cell, Data};
     ///
-    /// let cell = Cell::new((1, 2), Data::Int(42));
+    /// let cell = Cell::new((1, 2), Data::Int(42), None);
     ///
     /// assert_eq!(&Data::Int(42), cell.get_value());
     /// ```
     ///
     pub fn get_value(&self) -> &T {
         &self.val
+    }
+
+    /// Gets `Cell` style index.
+    ///
+    /// Returns the index into the workbook's styles array. This is only
+    /// populated for XLSX files and will be `None` for other formats.
+    ///
+    /// # Examples
+    ///
+    /// An example of getting a `Cell` style index.
+    ///
+    /// ```
+    /// use calamine::{Cell, Data};
+    ///
+    /// let cell = Cell::new((1, 2), Data::Int(42), Some(5));
+    ///
+    /// assert_eq!(Some(5), cell.get_style_index());
+    /// ```
+    ///
+    pub fn get_style_index(&self) -> Option<u32> {
+        self.style_index
     }
 }
 
