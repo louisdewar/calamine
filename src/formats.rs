@@ -37,9 +37,44 @@ impl Color {
         Ok(Self { r, g, b, a })
     }
 
+    /// Parse from RGB hex string (e.g., "FF0000" for opaque red)
+    pub fn from_rgb_hex(hex: &str) -> Result<Self, std::num::ParseIntError> {
+        if hex.len() != 6 {
+            return Err(u8::from_str_radix("", 16).unwrap_err());
+        }
+        let r = u8::from_str_radix(&hex[0..2], 16)?;
+        let g = u8::from_str_radix(&hex[2..4], 16)?;
+        let b = u8::from_str_radix(&hex[4..6], 16)?;
+        Ok(Self { r, g, b, a: 0xFF })
+    }
+
     /// Convert to ARGB hex string (e.g., "FFFF0000")
     pub fn to_argb_hex(&self) -> String {
         format!("{:02X}{:02X}{:02X}{:02X}", self.a, self.r, self.g, self.b)
+    }
+
+    /// Returns a tinted version of the color based on Excel tint adjustment.
+    pub fn with_tint(self, tint: f64) -> Self {
+        if tint == 0.0 {
+            return self;
+        }
+
+        fn apply(channel: u8, tint: f64) -> u8 {
+            let value = channel as f64 / 255.0;
+            let adjusted = if tint < 0.0 {
+                value * (1.0 + tint)
+            } else {
+                value + (1.0 - value) * tint
+            };
+            (adjusted.clamp(0.0, 1.0) * 255.0).round() as u8
+        }
+
+        Self {
+            r: apply(self.r, tint),
+            g: apply(self.g, tint),
+            b: apply(self.b, tint),
+            a: self.a,
+        }
     }
 }
 
