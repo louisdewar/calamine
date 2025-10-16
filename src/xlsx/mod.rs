@@ -24,7 +24,7 @@ use zip::result::ZipError;
 use crate::datatype::DataRef;
 use crate::formats::{
     builtin_format_by_id, detect_custom_number_format, CellFormat, CellStyle, Color, FillStyle,
-    FontStyle,
+    FontStyle, BUILTIN_NUMBER_FORMATS,
 };
 use crate::utils::{unescape_entity_to_buffer, unescape_xml};
 use crate::vba::VbaProject;
@@ -41,6 +41,13 @@ struct XfInfo {
     font_id: Option<usize>,
     fill_id: Option<usize>,
     num_fmt_id: Option<u32>,
+}
+
+fn builtin_number_format_map() -> BTreeMap<u32, String> {
+    BUILTIN_NUMBER_FORMATS
+        .iter()
+        .map(|(id, code)| (*id, (*code).to_string()))
+        .collect()
 }
 
 pub(crate) type XlReader<'a, RS> = XmlReader<BufReader<ZipFile<'a, RS>>>;
@@ -1742,7 +1749,7 @@ impl<RS: Read + Seek> Reader<RS> for Xlsx<RS> {
             formats: Vec::new(),
             styles: Vec::new(),
             theme: None,
-            number_formats: BTreeMap::new(),
+            number_formats: builtin_number_format_map(),
             is_1904: false,
             sheets: Vec::new(),
             tables: None,
@@ -2995,7 +3002,7 @@ mod tests {
             tables: None,
             formats: vec![],
             styles: vec![],
-            number_formats: BTreeMap::new(),
+            number_formats: builtin_number_format_map(),
             is_1904: false,
             metadata: Metadata::default(),
             #[cfg(feature = "picture")]
