@@ -23,8 +23,8 @@ use zip::result::ZipError;
 
 use crate::datatype::DataRef;
 use crate::formats::{
-    builtin_format_by_id, detect_custom_number_format, CellFormat, CellStyle, Color, FillStyle,
-    FontStyle, BUILTIN_NUMBER_FORMATS,
+    builtin_format_by_id, detect_custom_number_format, AlignmentStyle, CellFormat, CellStyle,
+    Color, FillStyle, FontStyle, HorizontalAlignment, VerticalAlignment, BUILTIN_NUMBER_FORMATS,
 };
 use crate::utils::{unescape_entity_to_buffer, unescape_xml};
 use crate::vba::VbaProject;
@@ -41,6 +41,7 @@ struct XfInfo {
     font_id: Option<usize>,
     fill_id: Option<usize>,
     num_fmt_id: Option<u32>,
+    alignment: Option<AlignmentStyle>,
 }
 
 fn builtin_number_format_map() -> BTreeMap<u32, String> {
@@ -484,9 +485,25 @@ impl<RS: Read + Seek> Xlsx<RS> {
                     inner_buf.clear();
                     match xml.read_event_into(&mut inner_buf) {
                         Ok(Event::Start(ref xf)) if xf.local_name().as_ref() == b"xf" => {
-                            let info = xf_info_from_element(xf)?;
+                            let mut info = xf_info_from_element(xf)?;
+
+                            // Parse child elements (e.g., <alignment>)
+                            loop {
+                                deep_buf.clear();
+                                match xml.read_event_into(&mut deep_buf) {
+                                    Ok(Event::Start(ref e) | Event::Empty(ref e))
+                                        if e.local_name().as_ref() == b"alignment" =>
+                                    {
+                                        info.alignment = parse_alignment(e)?;
+                                    }
+                                    Ok(Event::End(ref e)) if e.local_name().as_ref() == b"xf" => break,
+                                    Ok(Event::Eof) => return Err(XlsxError::XmlEof("cellStyleXfs/xf")),
+                                    Err(e) => return Err(XlsxError::Xml(e)),
+                                    _ => (),
+                                }
+                            }
+
                             cell_style_xfs.push(info);
-                            xml.read_to_end_into(xf.name(), &mut deep_buf)?;
                         }
                         Ok(Event::Empty(ref xf)) if xf.local_name().as_ref() == b"xf" => {
                             let info = xf_info_from_element(xf)?;
@@ -540,9 +557,112 @@ impl<RS: Read + Seek> Xlsx<RS> {
                 Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"cellXfs" => loop {
                     inner_buf.clear();
                     match xml.read_event_into(&mut inner_buf) {
-                        Ok(Event::Start(ref e) | Event::Empty(ref e))
-                            if e.local_name().as_ref() == b"xf" =>
-                        {
+                        Ok(Event::Start(ref e)) if e.local_name().as_ref() == b"xf" => {
+                            let mut num_fmt_id = None;
+                            let mut font_id = None;
+                            let mut fill_id = None;
+                            let mut xf_id = None;
+                            let mut apply_font = false;
+                            let mut apply_fill = false;
+                            let mut apply_alignment = false;
+
+                            for attr in e.attributes() {
+                                let attr = attr.map_err(XlsxError::XmlAttr)?;
+                                match attr.key {
+                                    QName(b"numFmtId") => {
+                                        num_fmt_id =
+                                            atoi_simd::parse::<u32>(attr.value.as_ref()).ok();
+                                    }
+                                    QName(b"fontId") => {
+                                        font_id =
+                                            atoi_simd::parse::<usize>(attr.value.as_ref()).ok();
+                                    }
+                                    QName(b"fillId") => {
+                                        fill_id =
+                                            atoi_simd::parse::<usize>(attr.value.as_ref()).ok();
+                                    }
+                                    QName(b"xfId") => {
+                                        xf_id = atoi_simd::parse::<usize>(attr.value.as_ref()).ok();
+                                    }
+                                    QName(b"applyFont") => {
+                                        apply_font =
+                                            matches!(attr.value.as_ref(), b"1" | b"true" | b"TRUE");
+                                    }
+                                    QName(b"applyFill") => {
+                                        apply_fill =
+                                            matches!(attr.value.as_ref(), b"1" | b"true" | b"TRUE");
+                                    }
+                                    QName(b"applyAlignment") => {
+                                        apply_alignment =
+                                            matches!(attr.value.as_ref(), b"1" | b"true" | b"TRUE");
+                                    }
+                                    _ => (),
+                                }
+                            }
+
+                            // Parse child elements (e.g., <alignment>)
+                            let mut direct_alignment = None;
+                            loop {
+                                deep_buf.clear();
+                                match xml.read_event_into(&mut deep_buf) {
+                                    Ok(Event::Start(ref e) | Event::Empty(ref e))
+                                        if e.local_name().as_ref() == b"alignment" =>
+                                    {
+                                        direct_alignment = parse_alignment(e)?;
+                                    }
+                                    Ok(Event::End(ref e)) if e.local_name().as_ref() == b"xf" => break,
+                                    Ok(Event::Eof) => return Err(XlsxError::XmlEof("xf")),
+                                    Err(e) => return Err(XlsxError::Xml(e)),
+                                    _ => (),
+                                }
+                            }
+
+                            let base = xf_id
+                                .and_then(|id| cell_style_xfs.get(id).cloned())
+                                .unwrap_or_default();
+
+                            let base_font = base.font_id.and_then(|id| fonts.get(id).cloned());
+                            let direct_font = font_id.and_then(|id| fonts.get(id).cloned());
+                            let font = match (apply_font, &direct_font, &base_font) {
+                                (_, Some(_), None) | (true, Some(_), _) => direct_font,
+                                _ => base_font,
+                            };
+
+                            let base_fill = base.fill_id.and_then(|id| fills.get(id).cloned());
+                            let direct_fill = fill_id.and_then(|id| fills.get(id).cloned());
+                            let fill = match (apply_fill, &direct_fill, &base_fill) {
+                                (_, Some(_), None) | (true, Some(_), _) => direct_fill,
+                                _ => base_fill,
+                            };
+
+                            let base_alignment = base.alignment.as_ref();
+                            let alignment = match (apply_alignment, &direct_alignment, base_alignment) {
+                                (_, Some(_), None) | (true, Some(_), _) => direct_alignment,
+                                _ => base_alignment.cloned(),
+                            };
+
+                            let effective_num_fmt_id = num_fmt_id.or(base.num_fmt_id);
+
+                            // Build CellFormat for backward compatibility
+                            let cell_format = if let Some(id) = effective_num_fmt_id {
+                                let id_bytes = id.to_string().into_bytes();
+                                match number_formats.get(&id_bytes) {
+                                    Some(fmt) => detect_custom_number_format(fmt),
+                                    None => builtin_format_by_id(&id_bytes),
+                                }
+                            } else {
+                                CellFormat::Other
+                            };
+                            self.formats.push(cell_format);
+
+                            self.styles.push(CellStyle {
+                                font,
+                                fill,
+                                alignment,
+                                number_format_id: effective_num_fmt_id,
+                            });
+                        }
+                        Ok(Event::Empty(ref e)) if e.local_name().as_ref() == b"xf" => {
                             let mut num_fmt_id = None;
                             let mut font_id = None;
                             let mut fill_id = None;
@@ -615,6 +735,7 @@ impl<RS: Read + Seek> Xlsx<RS> {
                             self.styles.push(CellStyle {
                                 font,
                                 fill,
+                                alignment: base.alignment,
                                 number_format_id: effective_num_fmt_id,
                             });
                         }
@@ -2004,6 +2125,55 @@ fn resolve_color(
     Ok(color)
 }
 
+fn parse_alignment(e: &BytesStart<'_>) -> Result<Option<AlignmentStyle>, XlsxError> {
+    let mut horizontal = None;
+    let mut vertical = None;
+    let mut indent = None;
+
+    for attr in e.attributes() {
+        let attr = attr.map_err(XlsxError::XmlAttr)?;
+        match attr.key {
+            QName(b"horizontal") => {
+                horizontal = match attr.value.as_ref() {
+                    b"left" => Some(HorizontalAlignment::Left),
+                    b"center" => Some(HorizontalAlignment::Center),
+                    b"right" => Some(HorizontalAlignment::Right),
+                    b"fill" => Some(HorizontalAlignment::Fill),
+                    b"justify" => Some(HorizontalAlignment::Justify),
+                    b"centerContinuous" => Some(HorizontalAlignment::CenterContinuous),
+                    b"distributed" => Some(HorizontalAlignment::Distributed),
+                    b"general" => Some(HorizontalAlignment::General),
+                    _ => None,
+                };
+            }
+            QName(b"vertical") => {
+                vertical = match attr.value.as_ref() {
+                    b"top" => Some(VerticalAlignment::Top),
+                    b"center" => Some(VerticalAlignment::Center),
+                    b"bottom" => Some(VerticalAlignment::Bottom),
+                    b"justify" => Some(VerticalAlignment::Justify),
+                    b"distributed" => Some(VerticalAlignment::Distributed),
+                    _ => None,
+                };
+            }
+            QName(b"indent") => {
+                indent = atoi_simd::parse::<u8>(attr.value.as_ref()).ok();
+            }
+            _ => (),
+        }
+    }
+
+    if horizontal.is_none() && vertical.is_none() && indent.is_none() {
+        Ok(None)
+    } else {
+        Ok(Some(AlignmentStyle {
+            horizontal,
+            vertical,
+            indent,
+        }))
+    }
+}
+
 fn xf_info_from_element(e: &BytesStart<'_>) -> Result<XfInfo, XlsxError> {
     let mut info = XfInfo::default();
     for attr in e.attributes() {
@@ -2559,6 +2729,7 @@ mod tests {
             formats: vec![],
             styles: vec![],
             number_formats: builtin_number_format_map(),
+            theme: None,
             is_1904: false,
             metadata: Metadata::default(),
             #[cfg(feature = "picture")]
