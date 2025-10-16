@@ -96,6 +96,40 @@ pub struct FillStyle {
     pub background_color: Option<Color>,
 }
 
+/// Horizontal alignment options
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum HorizontalAlignment {
+    Left,
+    Center,
+    Right,
+    Fill,
+    Justify,
+    CenterContinuous,
+    Distributed,
+    General,
+}
+
+/// Vertical alignment options
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum VerticalAlignment {
+    Top,
+    Center,
+    Bottom,
+    Justify,
+    Distributed,
+}
+
+/// Alignment style information
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct AlignmentStyle {
+    /// Horizontal alignment
+    pub horizontal: Option<HorizontalAlignment>,
+    /// Vertical alignment
+    pub vertical: Option<VerticalAlignment>,
+    /// Indentation level (0-15)
+    pub indent: Option<u8>,
+}
+
 /// Complete cell style with all formatting
 #[derive(Debug, Clone, PartialEq)]
 pub struct CellStyle {
@@ -103,6 +137,8 @@ pub struct CellStyle {
     pub font: Option<FontStyle>,
     /// Fill styling
     pub fill: Option<FillStyle>,
+    /// Alignment styling
+    pub alignment: Option<AlignmentStyle>,
     /// Number format ID
     pub number_format_id: Option<u32>,
 }

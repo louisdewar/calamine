@@ -443,9 +443,9 @@ impl CellType for usize {} // for tests
 /// use calamine::{Cell, Data, Range};
 ///
 /// let cells = vec![
-///     Cell::new((1, 1), Data::Int(1)),
-///     Cell::new((1, 2), Data::Int(2)),
-///     Cell::new((3, 1), Data::Int(3)),
+///     Cell::new((1, 1), Data::Int(1), None),
+///     Cell::new((1, 2), Data::Int(2), None),
+///     Cell::new((3, 1), Data::Int(3), None),
 /// ];
 ///
 /// // Create a Range from the cells.
@@ -862,9 +862,9 @@ impl<T: CellType> Range<T> {
     /// use calamine::{Cell, Data, Range};
     ///
     /// let cells = vec![
-    ///     Cell::new((2, 2), Data::Int(1)),
-    ///     Cell::new((5, 2), Data::Int(1)),
-    ///     Cell::new((9, 2), Data::Int(1)),
+    ///     Cell::new((2, 2), Data::Int(1), None),
+    ///     Cell::new((5, 2), Data::Int(1), None),
+    ///     Cell::new((9, 2), Data::Int(1), None),
     /// ];
     ///
     /// let range = Range::from_sparse(cells);
@@ -1522,9 +1522,9 @@ impl<T: CellType> IndexMut<(usize, usize)> for Range<T> {
 /// use calamine::{Cell, Data, Range};
 ///
 /// let cells = vec![
-///     Cell::new((1, 1), Data::Int(1)),
-///     Cell::new((1, 2), Data::Int(2)),
-///     Cell::new((3, 1), Data::Int(3)),
+///     Cell::new((1, 1), Data::Int(1), None),
+///     Cell::new((1, 2), Data::Int(2), None),
+///     Cell::new((3, 1), Data::Int(3), None),
 /// ];
 ///
 /// // Create a Range from the cells.
@@ -1591,9 +1591,9 @@ impl<'a, T: 'a + CellType> ExactSizeIterator for Cells<'a, T> {}
 /// use calamine::{Cell, Data, Range};
 ///
 /// let cells = vec![
-///     Cell::new((1, 1), Data::Int(1)),
-///     Cell::new((1, 2), Data::Int(2)),
-///     Cell::new((3, 1), Data::Int(3)),
+///     Cell::new((1, 1), Data::Int(1), None),
+///     Cell::new((1, 2), Data::Int(2), None),
+///     Cell::new((3, 1), Data::Int(3), None),
 /// ];
 ///
 /// // Create a Range from the cells.
@@ -1662,9 +1662,9 @@ impl<'a, T: 'a + CellType> DoubleEndedIterator for UsedCells<'a, T> {
 /// use calamine::{Cell, Data, Range};
 ///
 /// let cells = vec![
-///     Cell::new((1, 1), Data::Int(1)),
-///     Cell::new((1, 2), Data::Int(2)),
-///     Cell::new((3, 1), Data::Int(3)),
+///     Cell::new((1, 1), Data::Int(1), None),
+///     Cell::new((1, 2), Data::Int(2), None),
+///     Cell::new((3, 1), Data::Int(3), None),
 /// ];
 ///
 /// // Create a Range from the cells.
