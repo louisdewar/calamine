@@ -25,6 +25,7 @@ use crate::datatype::DataRef;
 use crate::formats::{
     builtin_format_by_id, detect_custom_number_format, AlignmentStyle, CellFormat, CellStyle,
     Color, FillStyle, FontStyle, HorizontalAlignment, VerticalAlignment, BUILTIN_NUMBER_FORMATS,
+    INDEXED_COLORS,
 };
 use crate::utils::{unescape_entity_to_buffer, unescape_xml};
 use crate::vba::VbaProject;
@@ -2069,6 +2070,7 @@ fn resolve_color(
 ) -> Result<Option<Color>, XlsxError> {
     let mut rgb_color: Option<Color> = None;
     let mut theme_index: Option<usize> = None;
+    let mut indexed_color: Option<usize> = None;
     let mut tint: Option<f64> = None;
 
     for attr in element.attributes() {
@@ -2090,6 +2092,12 @@ fn resolve_color(
                 theme_index = atoi_simd::parse::<usize>(value.as_ref()).ok();
             }
             Attribute {
+                key: QName(b"indexed"),
+                value,
+            } => {
+                indexed_color = atoi_simd::parse::<usize>(value.as_ref()).ok();
+            }
+            Attribute {
                 key: QName(b"tint"),
                 value,
             } => {
@@ -2107,6 +2115,8 @@ fn resolve_color(
         Some(rgb)
     } else if let Some(idx) = theme_index {
         theme.and_then(|t| t.color(idx))
+    } else if let Some(idx) = indexed_color {
+        INDEXED_COLORS.get(idx).and_then(|c| *c)
     } else {
         None
     };
