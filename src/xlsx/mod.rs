@@ -410,9 +410,9 @@ impl<RS: Read + Seek> Xlsx<RS> {
                                         id_bytes.extend_from_slice(&attr.value);
                                     }
                                     QName(b"formatCode") => {
-                                        format =
-                                            attr.decode_and_unescape_value(xml.decoder())?
-                                                .into_owned();
+                                        format = attr
+                                            .decode_and_unescape_value(xml.decoder())?
+                                            .into_owned();
                                     }
                                     _ => (),
                                 };
@@ -495,8 +495,12 @@ impl<RS: Read + Seek> Xlsx<RS> {
                                     {
                                         info.alignment = parse_alignment(e)?;
                                     }
-                                    Ok(Event::End(ref e)) if e.local_name().as_ref() == b"xf" => break,
-                                    Ok(Event::Eof) => return Err(XlsxError::XmlEof("cellStyleXfs/xf")),
+                                    Ok(Event::End(ref e)) if e.local_name().as_ref() == b"xf" => {
+                                        break
+                                    }
+                                    Ok(Event::Eof) => {
+                                        return Err(XlsxError::XmlEof("cellStyleXfs/xf"))
+                                    }
                                     Err(e) => return Err(XlsxError::Xml(e)),
                                     _ => (),
                                 }
@@ -609,7 +613,9 @@ impl<RS: Read + Seek> Xlsx<RS> {
                                     {
                                         direct_alignment = parse_alignment(e)?;
                                     }
-                                    Ok(Event::End(ref e)) if e.local_name().as_ref() == b"xf" => break,
+                                    Ok(Event::End(ref e)) if e.local_name().as_ref() == b"xf" => {
+                                        break
+                                    }
                                     Ok(Event::Eof) => return Err(XlsxError::XmlEof("xf")),
                                     Err(e) => return Err(XlsxError::Xml(e)),
                                     _ => (),
@@ -635,10 +641,11 @@ impl<RS: Read + Seek> Xlsx<RS> {
                             };
 
                             let base_alignment = base.alignment.as_ref();
-                            let alignment = match (apply_alignment, &direct_alignment, base_alignment) {
-                                (_, Some(_), None) | (true, Some(_), _) => direct_alignment,
-                                _ => base_alignment.cloned(),
-                            };
+                            let alignment =
+                                match (apply_alignment, &direct_alignment, base_alignment) {
+                                    (_, Some(_), None) | (true, Some(_), _) => direct_alignment,
+                                    _ => base_alignment.cloned(),
+                                };
 
                             let effective_num_fmt_id = num_fmt_id.or(base.num_fmt_id);
 

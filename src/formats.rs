@@ -147,9 +147,13 @@ fn hls_to_rgb(h: f64, l: f64, s: f64) -> (u8, u8, u8) {
         }
     };
 
-    let r = (hue_to_rgb(h_norm + 1.0 / 3.0) * 255.0).round().clamp(0.0, 255.0) as u8;
+    let r = (hue_to_rgb(h_norm + 1.0 / 3.0) * 255.0)
+        .round()
+        .clamp(0.0, 255.0) as u8;
     let g = (hue_to_rgb(h_norm) * 255.0).round().clamp(0.0, 255.0) as u8;
-    let b = (hue_to_rgb(h_norm - 1.0 / 3.0) * 255.0).round().clamp(0.0, 255.0) as u8;
+    let b = (hue_to_rgb(h_norm - 1.0 / 3.0) * 255.0)
+        .round()
+        .clamp(0.0, 255.0) as u8;
 
     (r, g, b)
 }
@@ -224,72 +228,392 @@ pub struct CellStyle {
 /// Indices 0-7 duplicate 8-15 for backwards compatibility.
 pub const INDEXED_COLORS: &[Option<Color>; 66] = &[
     // 0-7: Duplicates of 8-15 (backwards compatibility)
-    Some(Color { r: 0x00, g: 0x00, b: 0x00, a: 0xFF }), // 0: Black
-    Some(Color { r: 0xFF, g: 0xFF, b: 0xFF, a: 0xFF }), // 1: White
-    Some(Color { r: 0xFF, g: 0x00, b: 0x00, a: 0xFF }), // 2: Red
-    Some(Color { r: 0x00, g: 0xFF, b: 0x00, a: 0xFF }), // 3: Green
-    Some(Color { r: 0x00, g: 0x00, b: 0xFF, a: 0xFF }), // 4: Blue
-    Some(Color { r: 0xFF, g: 0xFF, b: 0x00, a: 0xFF }), // 5: Yellow
-    Some(Color { r: 0xFF, g: 0x00, b: 0xFF, a: 0xFF }), // 6: Magenta
-    Some(Color { r: 0x00, g: 0xFF, b: 0xFF, a: 0xFF }), // 7: Cyan
+    Some(Color {
+        r: 0x00,
+        g: 0x00,
+        b: 0x00,
+        a: 0xFF,
+    }), // 0: Black
+    Some(Color {
+        r: 0xFF,
+        g: 0xFF,
+        b: 0xFF,
+        a: 0xFF,
+    }), // 1: White
+    Some(Color {
+        r: 0xFF,
+        g: 0x00,
+        b: 0x00,
+        a: 0xFF,
+    }), // 2: Red
+    Some(Color {
+        r: 0x00,
+        g: 0xFF,
+        b: 0x00,
+        a: 0xFF,
+    }), // 3: Green
+    Some(Color {
+        r: 0x00,
+        g: 0x00,
+        b: 0xFF,
+        a: 0xFF,
+    }), // 4: Blue
+    Some(Color {
+        r: 0xFF,
+        g: 0xFF,
+        b: 0x00,
+        a: 0xFF,
+    }), // 5: Yellow
+    Some(Color {
+        r: 0xFF,
+        g: 0x00,
+        b: 0xFF,
+        a: 0xFF,
+    }), // 6: Magenta
+    Some(Color {
+        r: 0x00,
+        g: 0xFF,
+        b: 0xFF,
+        a: 0xFF,
+    }), // 7: Cyan
     // 8-15: Standard colors
-    Some(Color { r: 0x00, g: 0x00, b: 0x00, a: 0xFF }), // 8: Black
-    Some(Color { r: 0xFF, g: 0xFF, b: 0xFF, a: 0xFF }), // 9: White
-    Some(Color { r: 0xFF, g: 0x00, b: 0x00, a: 0xFF }), // 10: Red
-    Some(Color { r: 0x00, g: 0xFF, b: 0x00, a: 0xFF }), // 11: Green
-    Some(Color { r: 0x00, g: 0x00, b: 0xFF, a: 0xFF }), // 12: Blue
-    Some(Color { r: 0xFF, g: 0xFF, b: 0x00, a: 0xFF }), // 13: Yellow
-    Some(Color { r: 0xFF, g: 0x00, b: 0xFF, a: 0xFF }), // 14: Magenta
-    Some(Color { r: 0x00, g: 0xFF, b: 0xFF, a: 0xFF }), // 15: Cyan
+    Some(Color {
+        r: 0x00,
+        g: 0x00,
+        b: 0x00,
+        a: 0xFF,
+    }), // 8: Black
+    Some(Color {
+        r: 0xFF,
+        g: 0xFF,
+        b: 0xFF,
+        a: 0xFF,
+    }), // 9: White
+    Some(Color {
+        r: 0xFF,
+        g: 0x00,
+        b: 0x00,
+        a: 0xFF,
+    }), // 10: Red
+    Some(Color {
+        r: 0x00,
+        g: 0xFF,
+        b: 0x00,
+        a: 0xFF,
+    }), // 11: Green
+    Some(Color {
+        r: 0x00,
+        g: 0x00,
+        b: 0xFF,
+        a: 0xFF,
+    }), // 12: Blue
+    Some(Color {
+        r: 0xFF,
+        g: 0xFF,
+        b: 0x00,
+        a: 0xFF,
+    }), // 13: Yellow
+    Some(Color {
+        r: 0xFF,
+        g: 0x00,
+        b: 0xFF,
+        a: 0xFF,
+    }), // 14: Magenta
+    Some(Color {
+        r: 0x00,
+        g: 0xFF,
+        b: 0xFF,
+        a: 0xFF,
+    }), // 15: Cyan
     // 16-63: Extended palette
-    Some(Color { r: 0x80, g: 0x00, b: 0x00, a: 0xFF }), // 16: Maroon
-    Some(Color { r: 0x00, g: 0x80, b: 0x00, a: 0xFF }), // 17: Dark Green
-    Some(Color { r: 0x00, g: 0x00, b: 0x80, a: 0xFF }), // 18: Dark Blue
-    Some(Color { r: 0x80, g: 0x80, b: 0x00, a: 0xFF }), // 19: Olive
-    Some(Color { r: 0x80, g: 0x00, b: 0x80, a: 0xFF }), // 20: Purple
-    Some(Color { r: 0x00, g: 0x80, b: 0x80, a: 0xFF }), // 21: Teal
-    Some(Color { r: 0xC0, g: 0xC0, b: 0xC0, a: 0xFF }), // 22: Silver
-    Some(Color { r: 0x80, g: 0x80, b: 0x80, a: 0xFF }), // 23: Gray
-    Some(Color { r: 0x99, g: 0x99, b: 0xFF, a: 0xFF }), // 24
-    Some(Color { r: 0x99, g: 0x33, b: 0x66, a: 0xFF }), // 25
-    Some(Color { r: 0xFF, g: 0xFF, b: 0xCC, a: 0xFF }), // 26
-    Some(Color { r: 0xCC, g: 0xFF, b: 0xFF, a: 0xFF }), // 27
-    Some(Color { r: 0x66, g: 0x00, b: 0x66, a: 0xFF }), // 28
-    Some(Color { r: 0xFF, g: 0x80, b: 0x80, a: 0xFF }), // 29
-    Some(Color { r: 0x00, g: 0x66, b: 0xCC, a: 0xFF }), // 30
-    Some(Color { r: 0xCC, g: 0xCC, b: 0xFF, a: 0xFF }), // 31
-    Some(Color { r: 0x00, g: 0x00, b: 0x80, a: 0xFF }), // 32
-    Some(Color { r: 0xFF, g: 0x00, b: 0xFF, a: 0xFF }), // 33
-    Some(Color { r: 0xFF, g: 0xFF, b: 0x00, a: 0xFF }), // 34
-    Some(Color { r: 0x00, g: 0xFF, b: 0xFF, a: 0xFF }), // 35
-    Some(Color { r: 0x80, g: 0x00, b: 0x80, a: 0xFF }), // 36
-    Some(Color { r: 0x80, g: 0x00, b: 0x00, a: 0xFF }), // 37
-    Some(Color { r: 0x00, g: 0x80, b: 0x80, a: 0xFF }), // 38
-    Some(Color { r: 0x00, g: 0x00, b: 0xFF, a: 0xFF }), // 39
-    Some(Color { r: 0x00, g: 0xCC, b: 0xFF, a: 0xFF }), // 40
-    Some(Color { r: 0xCC, g: 0xFF, b: 0xFF, a: 0xFF }), // 41
-    Some(Color { r: 0xCC, g: 0xFF, b: 0xCC, a: 0xFF }), // 42
-    Some(Color { r: 0xFF, g: 0xFF, b: 0x99, a: 0xFF }), // 43
-    Some(Color { r: 0x99, g: 0xCC, b: 0xFF, a: 0xFF }), // 44
-    Some(Color { r: 0xFF, g: 0x99, b: 0xCC, a: 0xFF }), // 45
-    Some(Color { r: 0xCC, g: 0x99, b: 0xFF, a: 0xFF }), // 46
-    Some(Color { r: 0xFF, g: 0xCC, b: 0x99, a: 0xFF }), // 47
-    Some(Color { r: 0x33, g: 0x66, b: 0xFF, a: 0xFF }), // 48
-    Some(Color { r: 0x33, g: 0xCC, b: 0xCC, a: 0xFF }), // 49
-    Some(Color { r: 0x99, g: 0xCC, b: 0x00, a: 0xFF }), // 50
-    Some(Color { r: 0xFF, g: 0xCC, b: 0x00, a: 0xFF }), // 51
-    Some(Color { r: 0xFF, g: 0x99, b: 0x00, a: 0xFF }), // 52
-    Some(Color { r: 0xFF, g: 0x66, b: 0x00, a: 0xFF }), // 53
-    Some(Color { r: 0x66, g: 0x66, b: 0x99, a: 0xFF }), // 54
-    Some(Color { r: 0x96, g: 0x96, b: 0x96, a: 0xFF }), // 55
-    Some(Color { r: 0x00, g: 0x33, b: 0x66, a: 0xFF }), // 56
-    Some(Color { r: 0x33, g: 0x99, b: 0x66, a: 0xFF }), // 57
-    Some(Color { r: 0x00, g: 0x33, b: 0x00, a: 0xFF }), // 58
-    Some(Color { r: 0x33, g: 0x33, b: 0x00, a: 0xFF }), // 59
-    Some(Color { r: 0x99, g: 0x33, b: 0x00, a: 0xFF }), // 60
-    Some(Color { r: 0x99, g: 0x33, b: 0x66, a: 0xFF }), // 61
-    Some(Color { r: 0x33, g: 0x33, b: 0x99, a: 0xFF }), // 62
-    Some(Color { r: 0x33, g: 0x33, b: 0x33, a: 0xFF }), // 63
+    Some(Color {
+        r: 0x80,
+        g: 0x00,
+        b: 0x00,
+        a: 0xFF,
+    }), // 16: Maroon
+    Some(Color {
+        r: 0x00,
+        g: 0x80,
+        b: 0x00,
+        a: 0xFF,
+    }), // 17: Dark Green
+    Some(Color {
+        r: 0x00,
+        g: 0x00,
+        b: 0x80,
+        a: 0xFF,
+    }), // 18: Dark Blue
+    Some(Color {
+        r: 0x80,
+        g: 0x80,
+        b: 0x00,
+        a: 0xFF,
+    }), // 19: Olive
+    Some(Color {
+        r: 0x80,
+        g: 0x00,
+        b: 0x80,
+        a: 0xFF,
+    }), // 20: Purple
+    Some(Color {
+        r: 0x00,
+        g: 0x80,
+        b: 0x80,
+        a: 0xFF,
+    }), // 21: Teal
+    Some(Color {
+        r: 0xC0,
+        g: 0xC0,
+        b: 0xC0,
+        a: 0xFF,
+    }), // 22: Silver
+    Some(Color {
+        r: 0x80,
+        g: 0x80,
+        b: 0x80,
+        a: 0xFF,
+    }), // 23: Gray
+    Some(Color {
+        r: 0x99,
+        g: 0x99,
+        b: 0xFF,
+        a: 0xFF,
+    }), // 24
+    Some(Color {
+        r: 0x99,
+        g: 0x33,
+        b: 0x66,
+        a: 0xFF,
+    }), // 25
+    Some(Color {
+        r: 0xFF,
+        g: 0xFF,
+        b: 0xCC,
+        a: 0xFF,
+    }), // 26
+    Some(Color {
+        r: 0xCC,
+        g: 0xFF,
+        b: 0xFF,
+        a: 0xFF,
+    }), // 27
+    Some(Color {
+        r: 0x66,
+        g: 0x00,
+        b: 0x66,
+        a: 0xFF,
+    }), // 28
+    Some(Color {
+        r: 0xFF,
+        g: 0x80,
+        b: 0x80,
+        a: 0xFF,
+    }), // 29
+    Some(Color {
+        r: 0x00,
+        g: 0x66,
+        b: 0xCC,
+        a: 0xFF,
+    }), // 30
+    Some(Color {
+        r: 0xCC,
+        g: 0xCC,
+        b: 0xFF,
+        a: 0xFF,
+    }), // 31
+    Some(Color {
+        r: 0x00,
+        g: 0x00,
+        b: 0x80,
+        a: 0xFF,
+    }), // 32
+    Some(Color {
+        r: 0xFF,
+        g: 0x00,
+        b: 0xFF,
+        a: 0xFF,
+    }), // 33
+    Some(Color {
+        r: 0xFF,
+        g: 0xFF,
+        b: 0x00,
+        a: 0xFF,
+    }), // 34
+    Some(Color {
+        r: 0x00,
+        g: 0xFF,
+        b: 0xFF,
+        a: 0xFF,
+    }), // 35
+    Some(Color {
+        r: 0x80,
+        g: 0x00,
+        b: 0x80,
+        a: 0xFF,
+    }), // 36
+    Some(Color {
+        r: 0x80,
+        g: 0x00,
+        b: 0x00,
+        a: 0xFF,
+    }), // 37
+    Some(Color {
+        r: 0x00,
+        g: 0x80,
+        b: 0x80,
+        a: 0xFF,
+    }), // 38
+    Some(Color {
+        r: 0x00,
+        g: 0x00,
+        b: 0xFF,
+        a: 0xFF,
+    }), // 39
+    Some(Color {
+        r: 0x00,
+        g: 0xCC,
+        b: 0xFF,
+        a: 0xFF,
+    }), // 40
+    Some(Color {
+        r: 0xCC,
+        g: 0xFF,
+        b: 0xFF,
+        a: 0xFF,
+    }), // 41
+    Some(Color {
+        r: 0xCC,
+        g: 0xFF,
+        b: 0xCC,
+        a: 0xFF,
+    }), // 42
+    Some(Color {
+        r: 0xFF,
+        g: 0xFF,
+        b: 0x99,
+        a: 0xFF,
+    }), // 43
+    Some(Color {
+        r: 0x99,
+        g: 0xCC,
+        b: 0xFF,
+        a: 0xFF,
+    }), // 44
+    Some(Color {
+        r: 0xFF,
+        g: 0x99,
+        b: 0xCC,
+        a: 0xFF,
+    }), // 45
+    Some(Color {
+        r: 0xCC,
+        g: 0x99,
+        b: 0xFF,
+        a: 0xFF,
+    }), // 46
+    Some(Color {
+        r: 0xFF,
+        g: 0xCC,
+        b: 0x99,
+        a: 0xFF,
+    }), // 47
+    Some(Color {
+        r: 0x33,
+        g: 0x66,
+        b: 0xFF,
+        a: 0xFF,
+    }), // 48
+    Some(Color {
+        r: 0x33,
+        g: 0xCC,
+        b: 0xCC,
+        a: 0xFF,
+    }), // 49
+    Some(Color {
+        r: 0x99,
+        g: 0xCC,
+        b: 0x00,
+        a: 0xFF,
+    }), // 50
+    Some(Color {
+        r: 0xFF,
+        g: 0xCC,
+        b: 0x00,
+        a: 0xFF,
+    }), // 51
+    Some(Color {
+        r: 0xFF,
+        g: 0x99,
+        b: 0x00,
+        a: 0xFF,
+    }), // 52
+    Some(Color {
+        r: 0xFF,
+        g: 0x66,
+        b: 0x00,
+        a: 0xFF,
+    }), // 53
+    Some(Color {
+        r: 0x66,
+        g: 0x66,
+        b: 0x99,
+        a: 0xFF,
+    }), // 54
+    Some(Color {
+        r: 0x96,
+        g: 0x96,
+        b: 0x96,
+        a: 0xFF,
+    }), // 55
+    Some(Color {
+        r: 0x00,
+        g: 0x33,
+        b: 0x66,
+        a: 0xFF,
+    }), // 56
+    Some(Color {
+        r: 0x33,
+        g: 0x99,
+        b: 0x66,
+        a: 0xFF,
+    }), // 57
+    Some(Color {
+        r: 0x00,
+        g: 0x33,
+        b: 0x00,
+        a: 0xFF,
+    }), // 58
+    Some(Color {
+        r: 0x33,
+        g: 0x33,
+        b: 0x00,
+        a: 0xFF,
+    }), // 59
+    Some(Color {
+        r: 0x99,
+        g: 0x33,
+        b: 0x00,
+        a: 0xFF,
+    }), // 60
+    Some(Color {
+        r: 0x99,
+        g: 0x33,
+        b: 0x66,
+        a: 0xFF,
+    }), // 61
+    Some(Color {
+        r: 0x33,
+        g: 0x33,
+        b: 0x99,
+        a: 0xFF,
+    }), // 62
+    Some(Color {
+        r: 0x33,
+        g: 0x33,
+        b: 0x33,
+        a: 0xFF,
+    }), // 63
     None, // 64: System Foreground (not defined)
     None, // 65: System Background (not defined)
 ];
@@ -547,38 +871,77 @@ fn test_is_date_format() {
 fn test_color_tint() {
     // Test examples from OOXML spec
     // Example 1: Darken 50% - Lum = 200, tint = -0.5, expected Lum' = 100
-    let gray_200 = Color { r: 200, g: 200, b: 200, a: 255 };
+    let gray_200 = Color {
+        r: 200,
+        g: 200,
+        b: 200,
+        a: 255,
+    };
     let (_, l, _) = rgb_to_hls(gray_200.r, gray_200.g, gray_200.b);
     assert!((l - 200.0).abs() < 1.0, "Lightness should be ~200");
 
     let darkened = gray_200.with_tint(-0.5);
     let (_, l_dark, _) = rgb_to_hls(darkened.r, darkened.g, darkened.b);
-    assert!((l_dark - 100.0).abs() < 1.0, "Darkened lightness should be ~100, got {}", l_dark);
+    assert!(
+        (l_dark - 100.0).abs() < 1.0,
+        "Darkened lightness should be ~100, got {}",
+        l_dark
+    );
 
     // Example 2: Lighten 75% - Lum = 100, tint = 0.75, expected Lum' = 217
-    let gray_100 = Color { r: 100, g: 100, b: 100, a: 255 };
+    let gray_100 = Color {
+        r: 100,
+        g: 100,
+        b: 100,
+        a: 255,
+    };
     let (_, l, _) = rgb_to_hls(gray_100.r, gray_100.g, gray_100.b);
     assert!((l - 100.0).abs() < 1.0, "Lightness should be ~100");
 
     let lightened = gray_100.with_tint(0.75);
     let (_, l_light, _) = rgb_to_hls(lightened.r, lightened.g, lightened.b);
-    assert!((l_light - 217.0).abs() < 2.0, "Lightened lightness should be ~217, got {}", l_light);
+    assert!(
+        (l_light - 217.0).abs() < 2.0,
+        "Lightened lightness should be ~217, got {}",
+        l_light
+    );
 
     // Test edge cases
     // Darken 100% (make black)
     let darkened_full = gray_200.with_tint(-1.0);
-    assert_eq!(darkened_full, Color { r: 0, g: 0, b: 0, a: 255 });
+    assert_eq!(
+        darkened_full,
+        Color {
+            r: 0,
+            g: 0,
+            b: 0,
+            a: 255
+        }
+    );
 
     // Lighten 100% (make white)
     let lightened_full = gray_100.with_tint(1.0);
-    assert_eq!(lightened_full, Color { r: 255, g: 255, b: 255, a: 255 });
+    assert_eq!(
+        lightened_full,
+        Color {
+            r: 255,
+            g: 255,
+            b: 255,
+            a: 255
+        }
+    );
 
     // No tint (should remain unchanged)
     let unchanged = gray_200.with_tint(0.0);
     assert_eq!(unchanged, gray_200);
 
     // Test with a colored value (should preserve hue and saturation)
-    let red = Color { r: 255, g: 0, b: 0, a: 255 };
+    let red = Color {
+        r: 255,
+        g: 0,
+        b: 0,
+        a: 255,
+    };
     let darkened_red = red.with_tint(-0.5);
     // Should still be reddish, just darker
     assert!(darkened_red.r > darkened_red.g && darkened_red.r > darkened_red.b);
