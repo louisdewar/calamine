@@ -3,18 +3,15 @@ use std::env;
 use std::path::PathBuf;
 
 fn main() {
-    let excel_file = env::args()
-        .nth(1)
-        .unwrap_or_else(|| {
-            eprintln!("Usage: cargo run --example style_extraction <path_to_xlsx_file> [sheet_name]");
-            std::process::exit(1);
-        });
+    let excel_file = env::args().nth(1).unwrap_or_else(|| {
+        eprintln!("Usage: cargo run --example style_extraction <path_to_xlsx_file> [sheet_name]");
+        std::process::exit(1);
+    });
 
     let sheet_name = env::args().nth(2);
     let excel_path = PathBuf::from(excel_file);
 
-    let mut workbook: Xlsx<_> = open_workbook(&excel_path)
-        .expect("Failed to open workbook");
+    let mut workbook: Xlsx<_> = open_workbook(&excel_path).expect("Failed to open workbook");
 
     // Print available styles
     println!("=== Workbook Styles ===");
@@ -35,7 +32,8 @@ fn main() {
     let sheet = if let Some(name) = sheet_name {
         name
     } else {
-        workbook.sheet_names()
+        workbook
+            .sheet_names()
             .first()
             .expect("No sheets found")
             .clone()
@@ -44,7 +42,8 @@ fn main() {
     println!("=== Reading cells from sheet: {} ===", sheet);
 
     // Read cells using the reference API to get style indices
-    let range = workbook.worksheet_range_ref(&sheet)
+    let range = workbook
+        .worksheet_range_ref(&sheet)
         .expect("Failed to read worksheet");
 
     // Show first 10 non-empty cells with their styles
@@ -56,10 +55,7 @@ fn main() {
 
         // For demonstration, print cells at row 0 with their styles
         if row == 0 {
-            println!(
-                "Cell ({}, {}): {:?}",
-                row, col, value
-            );
+            println!("Cell ({}, {}): {:?}", row, col, value);
             count += 1;
         }
     }

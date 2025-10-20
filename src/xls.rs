@@ -627,7 +627,11 @@ fn parse_number(r: &[u8], formats: &[CellFormat], is_1904: bool) -> Result<Cell<
     let v = read_f64(&r[6..]);
     let format = formats.get(read_u16(&r[4..]) as usize);
 
-    Ok(Cell::new((row, col), format_excel_f64(v, format, is_1904), None))
+    Ok(Cell::new(
+        (row, col),
+        format_excel_f64(v, format, is_1904),
+        None,
+    ))
 }
 
 fn parse_bool_err(r: &[u8]) -> Result<Cell<Data>, XlsError> {
@@ -735,7 +739,11 @@ fn parse_mul_rk(
     let mut col = col_first as u32;
 
     for rk in r[4..r.len() - 2].chunks(6) {
-        cells.push(Cell::new((row as u32, col), rk_num(rk, formats, is_1904), None));
+        cells.push(Cell::new(
+            (row as u32, col),
+            rk_num(rk, formats, is_1904),
+            None,
+        ));
         col += 1;
     }
     Ok(())

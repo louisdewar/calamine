@@ -134,9 +134,8 @@ where
                         (self.row_index, self.col_index)
                     };
                     let mut value = DataRef::Empty;
-                    let mut style_index =
-                        get_attribute(c_element.attributes(), QName(b"s"))?
-                            .and_then(|style| atoi_simd::parse::<u32>(style).ok());
+                    let mut style_index = get_attribute(c_element.attributes(), QName(b"s"))?
+                        .and_then(|style| atoi_simd::parse::<u32>(style).ok());
                     loop {
                         self.cell_buf.clear();
                         match self.xml.read_event_into(&mut self.cell_buf) {
