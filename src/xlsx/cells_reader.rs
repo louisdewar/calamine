@@ -134,7 +134,9 @@ where
                         (self.row_index, self.col_index)
                     };
                     let mut value = DataRef::Empty;
-                    let mut style_index = None;
+                    let mut style_index =
+                        get_attribute(c_element.attributes(), QName(b"s"))?
+                            .and_then(|style| atoi_simd::parse::<u32>(style).ok());
                     loop {
                         self.cell_buf.clear();
                         match self.xml.read_event_into(&mut self.cell_buf) {
@@ -148,7 +150,9 @@ where
                                     c_element,
                                 )?;
                                 value = v;
-                                style_index = s;
+                                if let Some(idx) = s {
+                                    style_index = Some(idx);
+                                }
                             }
                             Ok(Event::End(ref e)) if e.local_name().as_ref() == b"c" => break,
                             Ok(Event::Eof) => return Err(XlsxError::XmlEof("c")),

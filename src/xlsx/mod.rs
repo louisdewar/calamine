@@ -393,21 +393,20 @@ impl<RS: Read + Seek> Xlsx<RS> {
                             let mut id = None;
                             let mut id_bytes = Vec::new();
                             let mut format = String::new();
-                            for a in e.attributes() {
-                                match a? {
-                                    Attribute {
-                                        key: QName(b"numFmtId"),
-                                        value: v,
-                                    } => {
-                                        id = atoi_simd::parse::<u32>(&v).ok();
-                                        id_bytes.extend_from_slice(&v);
+                            for attr in e.attributes() {
+                                let attr = attr?;
+                                match attr.key {
+                                    QName(b"numFmtId") => {
+                                        id = atoi_simd::parse::<u32>(&attr.value).ok();
+                                        id_bytes.extend_from_slice(&attr.value);
                                     }
-                                    Attribute {
-                                        key: QName(b"formatCode"),
-                                        value: v,
-                                    } => format = xml.decoder().decode(&v)?.into_owned(),
+                                    QName(b"formatCode") => {
+                                        format =
+                                            attr.decode_and_unescape_value(xml.decoder())?
+                                                .into_owned();
+                                    }
                                     _ => (),
-                                }
+                                };
                             }
                             if let Some(id) = id {
                                 if !format.is_empty() {
